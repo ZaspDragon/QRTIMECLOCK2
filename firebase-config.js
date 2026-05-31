@@ -1,13 +1,20 @@
+const runtimeBasePath = window.location.pathname.endsWith("/")
+  ? window.location.pathname
+  : window.location.pathname.replace(/[^/]*$/, "");
+
 export const firebaseConfig = {
-  apiKey: "AIzaSyB4xdaxbkXDRILPe2nGZuGCS-PXf35bk3o",
-  authDomain: "qrtimeclock-42764.firebaseapp.com",
-  projectId: "qrtimeclock-42764",
-  storageBucket: "qrtimeclock-42764.appspot.com",
-  messagingSenderId: "232535382723",
-  appId: "1:232535382723:web:9fe08f4961d87ba4062076"
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
 };
 
+export const firebaseEnabled = Object.values(firebaseConfig).every((value) => String(value || "").trim().length > 0);
+
 export const appSettings = {
-  companyName: "Chadwell",              // fallback if company doc not loaded
-  defaultAppUrl: "https://qrtimeclock-42764.web.app"
+  companyName: "QR TimeClock Pro",
+  defaultAppUrl: `${window.location.origin}${runtimeBasePath || "/"}`,
+  setupMessage: "QRTIMECLOCK2 is isolated from the original QRTimeClock Pro data. Add this repo's own Firebase web config before using live punches or manager sign-in."
 };

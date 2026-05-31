@@ -1,4 +1,8 @@
-# QR TimeClock Pro (Firebase Version)
+# QR TimeClock Pro (QRTIMECLOCK2 Mirror)
+
+This repo is meant to stay visually and functionally similar to the original QRTimeClock Pro app while remaining isolated from the original repo's live Firebase data.
+
+By default, `QRTIMECLOCK2` ships with blank Firebase config values, so it will not read or write the original app's data until you connect this repo to its own Firebase project.
 
 This version is built for **Firebase Hosting + Firebase Authentication + Cloud Firestore**.
 

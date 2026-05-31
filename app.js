@@ -1,4 +1,4 @@
-import { firebaseConfig, appSettings } from './firebase-config.js';
+import { firebaseConfig, firebaseEnabled, appSettings } from './firebase-config.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
 import {
   getAuth,
@@ -26,9 +26,19 @@ import {
   Timestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+let app = null;
+let auth = null;
+let db = null;
+
+if (firebaseEnabled) {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (error) {
+    console.error('Firebase failed to initialize in QRTIMECLOCK2:', error);
+  }
+}
 
 const state = {
   me: null,
@@ -144,6 +154,12 @@ init();
 
 async function init() {
   wireEvents();
+
+  if (!firebaseReady()) {
+    showLoggedOut();
+    renderFirebaseUnavailable();
+    return;
+  }
 
   // Load employees for public QR autocomplete
   loadPublicEmployees();
@@ -293,6 +309,10 @@ function wireEvents() {
 
 // ─── Public employee loading & autocomplete ─────────────
 async function loadPublicEmployees() {
+  if (!firebaseReady()) {
+    state.publicEmployees = [];
+    return;
+  }
   const urlCompanyId = new URLSearchParams(window.location.search).get('company') || '';
   try {
     // Simple query: filter by status only (no orderBy to avoid composite index requirement)
@@ -479,6 +499,8 @@ function escapeHTML(str) {
 }
 
 async function handleWorkerPunch(action) {
+  if (!requireFirebaseReady('save punches')) return;
+
   let emp = state.workerEmployee;
   const typedName = prettifyHumanName(els.workerNameInput?.value.trim() || '');
 
@@ -667,6 +689,7 @@ async function handleManualPunchSubmit(event) {
 }
 
 function attachWorkerLiveView(name) {
+  if (!firebaseReady()) return;
   if (state.workerUnsub) {
     try { state.workerUnsub(); } catch (_) {}
     state.workerUnsub = null;
@@ -741,6 +764,7 @@ function findLatestClockInTime(rows) {
 
 async function handleLogin(event) {
   event.preventDefault();
+  if (!requireFirebaseReady('sign in')) return;
 
   try {
     await signInWithEmailAndPassword(
@@ -756,6 +780,7 @@ async function handleLogin(event) {
 }
 
 async function handlePasswordReset() {
+  if (!requireFirebaseReady('send reset emails')) return;
   const email = els.emailInput?.value.trim();
   if (!email) {
     toast('Enter the email first, then tap reset.', true);
@@ -784,6 +809,41 @@ function showLoggedOut() {
   // Reset header
   const headerP = document.querySelector('.topbar p');
   if (headerP) headerP.textContent = 'Mobile punch tracking with live manager visibility and weekly signoff.';
+}
+
+function firebaseReady() {
+  return Boolean(firebaseEnabled && app && auth && db);
+}
+
+function requireFirebaseReady(actionLabel) {
+  if (firebaseReady()) return true;
+  toast(`Firebase is not configured for QRTIMECLOCK2 yet, so it cannot ${actionLabel}.`, true);
+  return false;
+}
+
+function renderFirebaseUnavailable() {
+  const workerCard = document.getElementById('workerCard');
+  if (workerCard) workerCard.classList.remove('hidden');
+  if (els.workerLookupStatus) {
+    els.workerLookupStatus.textContent = appSettings.setupMessage;
+    els.workerLookupStatus.style.borderColor = 'rgba(255,202,87,0.45)';
+  }
+  if (els.workerStatusMessage) {
+    els.workerStatusMessage.textContent = appSettings.setupMessage;
+  }
+  document.querySelectorAll('.worker-action-btn').forEach((btn) => {
+    btn.disabled = true;
+    btn.title = appSettings.setupMessage;
+  });
+  if (els.emailInput) els.emailInput.placeholder = 'Manager email';
+  if (els.passwordInput) els.passwordInput.placeholder = 'Password';
+  if (els.resetPasswordBtn) {
+    els.resetPasswordBtn.disabled = true;
+    els.resetPasswordBtn.title = appSettings.setupMessage;
+  }
+  const headerP = document.querySelector('.topbar p');
+  if (headerP) headerP.textContent = appSettings.setupMessage;
+  toast(appSettings.setupMessage, true);
 }
 
 function showLoggedIn() {
