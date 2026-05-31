@@ -8,8 +8,7 @@ const filesToCopy = [
   "index.html",
   "style.css",
   "app.js",
-  "firebase-config.js",
-  "billing-config.js"
+  "firebase-config.js"
 ];
 
 fs.rmSync(dist, { recursive: true, force: true });

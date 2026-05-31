@@ -3,300 +3,576 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#1f6fff" />
-  <meta
-    name="description"
-    content="Portaly is a QR timeclock, approvals, payroll, and margin platform built for staffing agencies."
-  />
-  <title>Portaly | Staffing Agency Operating System</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
-    rel="stylesheet"
-  />
+  <title>QR TimeClock Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" defer></script>
+  <script type="module" src="app.js"></script>
 </head>
-<body data-layout="public">
-  <div id="app"></div>
-  <div class="toast-root" id="toastRoot" aria-live="polite" aria-atomic="true"></div>
+<body>
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
 
-  <script src="firebase-config.js"></script>
-  <script src="billing-config.js"></script>
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
-    import {
-      getAuth,
-      setPersistence,
-      browserLocalPersistence,
-      onAuthStateChanged,
-      signInWithEmailAndPassword,
-      createUserWithEmailAndPassword,
-      sendPasswordResetEmail,
-      signOut
-    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
-    import {
-      getFirestore,
-      collection,
-      doc,
-      setDoc,
-      addDoc,
-      getDoc,
-      getDocs,
-      updateDoc,
-      deleteDoc,
-      query,
-      where,
-      orderBy,
-      limit,
-      writeBatch,
-      serverTimestamp
-    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+  <header class="topbar">
+    <div>
+      <h1>TimeClock Pro</h1>
+      <p>Mobile punch tracking with live manager visibility and weekly signoff.</p>
+    </div>
+    <div id="sessionChip" class="session-chip hidden">
+      <span id="sessionName">-</span>
+      <span id="sessionRole" class="pill">-</span>
+      <button id="signOutBtn" class="ghost-btn" type="button">Sign out</button>
+    </div>
+  </header>
 
-    function createSnapshotAdapter(snapshot) {
-      return {
-        id: snapshot.id,
-        exists: snapshot.exists(),
-        data: () => snapshot.data(),
-        ref: snapshot.ref
-      };
-    }
+  <main class="shell">
+    <section id="workerCard" class="card">
+      <div class="card-head">
+        <h2>Worker Punch</h2>
+        <p>Type your name — we'll find you or set you up automatically.</p>
+      </div>
 
-    function createQuerySnapshotAdapter(snapshot) {
-      return {
-        empty: snapshot.empty,
-        size: snapshot.size,
-        docs: snapshot.docs.map(createSnapshotAdapter)
-      };
-    }
+      <div class="stack gap16">
+        <label>
+          <span>Your name</span>
+          <div class="autocomplete-wrap">
+            <input id="workerNameInput" type="text" placeholder="First and last name"
+              autocomplete="off" spellcheck="false" />
+            <ul id="workerAutocompleteList" class="autocomplete-list" hidden></ul>
+          </div>
+        </label>
+        <div id="workerLookupStatus" class="status-box">Type your name to begin.</div>
 
-    function applyQueryState(sourceRef, state) {
-      let current = sourceRef;
-      state.whereClauses.forEach(args => {
-        current = query(current, where(...args));
-      });
-      state.orderClauses.forEach(args => {
-        current = query(current, orderBy(...args));
-      });
-      if (state.limitValue !== null) {
-        current = query(current, limit(state.limitValue));
-      }
-      return current;
-    }
+        <div class="button-grid">
+          <button class="primary-btn worker-action-btn" data-action="clock_in" type="button">Clock In</button>
+          <button class="secondary-btn worker-action-btn" data-action="start_lunch" type="button">Start Lunch</button>
+          <button class="secondary-btn worker-action-btn" data-action="end_lunch" type="button">End Lunch</button>
+          <button class="danger-btn worker-action-btn" data-action="clock_out" type="button">Clock Out</button>
+        </div>
 
-    function createDocumentRef(db, collectionName, id) {
-      return {
-        id,
-        async get() {
-          const snapshot = await getDoc(doc(db, collectionName, id));
-          return createSnapshotAdapter(snapshot);
-        },
-        async set(data, options = {}) {
-          await setDoc(doc(db, collectionName, id), data, options);
-        },
-        async update(data) {
-          await updateDoc(doc(db, collectionName, id), data);
-        },
-        async delete() {
-          await deleteDoc(doc(db, collectionName, id));
-        }
-      };
-    }
+        <div class="stats-grid">
+          <div class="stat-card"><span>Entered name</span><strong id="workerNameValue">-</strong></div>
+          <div class="stat-card"><span>Last action</span><strong id="workerLastActionValue">-</strong></div>
+          <div class="stat-card"><span>Last punch</span><strong id="workerLastPunchValue">-</strong></div>
+          <div class="stat-card"><span>Status</span><strong id="workerStatusValue">Ready</strong></div>
+        </div>
 
-    function createCollectionRef(db, collectionName, queryState = null) {
-      const state = queryState || {
-        whereClauses: [],
-        orderClauses: [],
-        limitValue: null
-      };
+        <div id="workerStatusMessage" class="status-box">Enter your name and punch.</div>
 
-      return {
-        doc(id) {
-          return createDocumentRef(db, collectionName, id);
-        },
-        where(field, operator, value) {
-          return createCollectionRef(db, collectionName, {
-            ...state,
-            whereClauses: [...state.whereClauses, [field, operator, value]]
-          });
-        },
-        orderBy(field, direction = "asc") {
-          return createCollectionRef(db, collectionName, {
-            ...state,
-            orderClauses: [...state.orderClauses, [field, direction]]
-          });
-        },
-        limit(value) {
-          return createCollectionRef(db, collectionName, {
-            ...state,
-            limitValue: value
-          });
-        },
-        async get() {
-          const ref = applyQueryState(collection(db, collectionName), state);
-          return createQuerySnapshotAdapter(await getDocs(ref));
-        },
-        async add(data) {
-          const response = await addDoc(collection(db, collectionName), data);
-          return { id: response.id };
-        }
-      };
-    }
+        <div class="mini-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date/Time</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="workerHistoryBody">
+              <tr><td colspan="2">No punches yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
-    function createBatchAdapter(db) {
-      const batch = writeBatch(db);
-      return {
-        set(targetRef, data, options = {}) {
-          batch.set(doc(db, targetRef.collectionName || targetRef._collectionName || targetRef.__collectionName || targetRef.path.split("/")[0], targetRef.id), data, options);
-        },
-        update(targetRef, data) {
-          batch.update(doc(db, targetRef.collectionName || targetRef._collectionName || targetRef.__collectionName || targetRef.path.split("/")[0], targetRef.id), data);
-        },
-        delete(targetRef) {
-          batch.delete(doc(db, targetRef.collectionName || targetRef._collectionName || targetRef.__collectionName || targetRef.path.split("/")[0], targetRef.id));
-        },
-        commit() {
-          return batch.commit();
-        }
-      };
-    }
+    <section id="authCard" class="card auth-card">
+      <div class="card-head">
+        <h2>Manager Sign In</h2>
+        <p>Managers and admins use email/password to view live punches and sign weekly timesheets.</p>
+      </div>
 
-    function attachCollectionName(target, collectionName) {
-      target.collectionName = collectionName;
-      target._collectionName = collectionName;
-      target.__collectionName = collectionName;
-      target.path = `${collectionName}/${target.id}`;
-      return target;
-    }
+      <form id="loginForm" class="grid-form">
+        <label>
+          <span>Email</span>
+          <input id="emailInput" type="email" placeholder="manager@company.com" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input id="passwordInput" type="password" placeholder="Password" required />
+        </label>
+        <div class="form-actions full-width">
+          <button class="primary-btn" type="submit">Sign in</button>
+          <button id="resetPasswordBtn" class="secondary-btn" type="button">Send reset email</button>
+        </div>
+      </form>
+    </section>
 
-    try {
-      const config = window.PORTALY_FIREBASE_CONFIG || {};
-      const firebaseConfig = config.firebaseConfig || {
-        apiKey: config.apiKey,
-        authDomain: config.authDomain,
-        projectId: config.projectId,
-        storageBucket: config.storageBucket,
-        messagingSenderId: config.messagingSenderId,
-        appId: config.appId,
-        measurementId: config.measurementId
-      };
+    <section id="appShell" class="hidden">
+      <nav class="tabs" id="tabBar">
+        <button class="tab hidden" data-tab="myTimecardTab" type="button" id="myTimecardTabBtn">My Timecard</button>
+        <button class="tab hidden" data-tab="missedPunchTab" type="button" id="missedPunchTabBtn">Request Punch</button>
+        <button class="tab active" data-tab="managerTab" type="button" id="managerTabBtn">Manager Live</button>
+        <button class="tab" data-tab="timesheetsTab" type="button" id="timesheetsTabBtn">Weekly Signoff</button>
+        <button class="tab" data-tab="editPunchesTab" type="button" id="editPunchesTabBtn">Edit Punches</button>
+        <button class="tab" data-tab="approvalsTab" type="button" id="approvalsTabBtn">Approvals</button>
+        <button class="tab" data-tab="employeesTab" type="button" id="employeesTabBtn">Employees</button>
+        <button class="tab hidden" data-tab="adminTab" type="button" id="adminTabBtn">Users</button>
+        <button class="tab" data-tab="agencyTab" type="button" id="agencyTabBtn">Agency Export</button>
+      </nav>
 
-      if (!config.enabled) {
-        window.PortalyFirebase = {
-          ready: false,
-          disabled: true,
-          error: "",
-          config
-        };
-        window.dispatchEvent(new Event("portaly-firebase-ready"));
-      } else {
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        try {
-          await setPersistence(auth, browserLocalPersistence);
-        } catch (persistenceError) {
-          console.warn("[Portaly] Firebase auth persistence fallback", persistenceError);
-        }
-        const db = getFirestore(app);
-        let analytics = null;
-        let getAnalytics = () => null;
+      <section id="myTimecardTab" class="tab-panel hidden">
+        <div class="card mobile-priority">
+          <div class="card-head split-head">
+            <div>
+              <h2>My Timecard</h2>
+              <p>Your punch history and weekly hours. Read-only.</p>
+            </div>
+            <div class="inline-field slim-field">
+              <label for="myTimecardWeekPicker">Week start</label>
+              <input id="myTimecardWeekPicker" type="date" />
+            </div>
+          </div>
 
-        try {
-          const analyticsModule = await import("https://www.gstatic.com/firebasejs/12.7.0/firebase-analytics.js");
-          getAnalytics = analyticsModule.getAnalytics;
-          analytics = getAnalytics(app);
-        } catch (analyticsError) {
-          console.warn("[Portaly] Firebase Analytics unavailable", analyticsError);
-          analytics = null;
-        }
+          <div class="stats-grid" style="margin-bottom:18px;">
+            <div class="stat-card"><span>Total hours this week</span><strong id="myTcTotalHours">0.00</strong></div>
+            <div class="stat-card"><span>Days worked</span><strong id="myTcDaysWorked">0</strong></div>
+            <div class="stat-card"><span>Last punch</span><strong id="myTcLastPunch">-</strong></div>
+            <div class="stat-card"><span>Status</span><strong id="myTcStatus">-</strong></div>
+          </div>
 
-        const authBridge = {
-          raw: auth,
-          onAuthStateChanged(callback) {
-            return onAuthStateChanged(auth, callback);
-          },
-          signInWithEmailAndPassword(email, password) {
-            return signInWithEmailAndPassword(auth, email, password);
-          },
-          createUserWithEmailAndPassword(email, password) {
-            return createUserWithEmailAndPassword(auth, email, password);
-          },
-          sendPasswordResetEmail(email) {
-            return sendPasswordResetEmail(auth, email);
-          },
-          signOut() {
-            return signOut(auth);
-          }
-        };
+          <div class="mini-table-wrap tall">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Clock In</th>
+                  <th>Lunch Out</th>
+                  <th>Lunch In</th>
+                  <th>Clock Out</th>
+                  <th>Hours</th>
+                </tr>
+              </thead>
+              <tbody id="myTimecardBody">
+                <tr><td colspan="6">No punches this week.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
-        Object.defineProperty(authBridge, "currentUser", {
-          get() {
-            return auth.currentUser;
-          }
-        });
+      <section id="missedPunchTab" class="tab-panel hidden">
+        <div class="panel-grid two-up">
+          <article class="card">
+            <div class="card-head">
+              <h2>Request a Missed Punch</h2>
+              <p>Forgot to clock in or out? Submit a request for your manager to approve.</p>
+            </div>
 
-        const dbBridge = {
-          raw: db,
-          collection(collectionName) {
-            const ref = createCollectionRef(db, collectionName);
-            const originalDoc = ref.doc;
-            ref.doc = id => attachCollectionName(originalDoc(id), collectionName);
-            return ref;
-          },
-          batch() {
-            return createBatchAdapter(db);
-          }
-        };
+            <form id="missedPunchForm" class="grid-form">
+              <label>
+                <span>Action</span>
+                <select id="mpActionInput">
+                  <option value="clock_in">Clock In</option>
+                  <option value="start_lunch">Start Lunch</option>
+                  <option value="end_lunch">End Lunch</option>
+                  <option value="clock_out">Clock Out</option>
+                </select>
+              </label>
+              <label>
+                <span>Date</span>
+                <input id="mpDateInput" type="date" required />
+              </label>
+              <label>
+                <span>Time</span>
+                <input id="mpTimeInput" type="time" required />
+              </label>
+              <label class="full-width">
+                <span>Reason</span>
+                <input id="mpReasonInput" type="text" placeholder="e.g. Forgot to clock in" required />
+              </label>
+              <div class="form-actions full-width">
+                <button class="primary-btn" type="submit">Submit Request</button>
+              </div>
+            </form>
+          </article>
 
-        window.PortalyFirebase = {
-          ready: true,
-          disabled: false,
-          error: "",
-          config,
-          app,
-          analytics,
-          auth: authBridge,
-          db: dbBridge,
-          initializeApp,
-          getAnalytics,
-          getAuth,
-          onAuthStateChanged,
-          signInWithEmailAndPassword,
-          createUserWithEmailAndPassword,
-          sendPasswordResetEmail,
-          signOut,
-          getFirestore,
-          collection,
-          doc,
-          setDoc,
-          addDoc,
-          getDoc,
-          getDocs,
-          updateDoc,
-          deleteDoc,
-          query,
-          where,
-          orderBy,
-          serverTimestamp,
-          waitForReady() {
-            return Promise.resolve(window.PortalyFirebase);
-          }
-        };
+          <article class="card">
+            <div class="card-head">
+              <h2>My Requests</h2>
+              <p>Track the status of your submitted requests.</p>
+            </div>
 
-        window.dispatchEvent(new Event("portaly-firebase-ready"));
-      }
-    } catch (error) {
-      console.error(error);
-      window.PortalyFirebase = {
-        ready: false,
-        disabled: false,
-        error: error.message || "Firebase failed to initialize.",
-        config: window.PORTALY_FIREBASE_CONFIG || {}
-      };
-      window.dispatchEvent(new Event("portaly-firebase-ready"));
-    }
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
-  <script src="app.js" defer></script>
+            <div class="mini-table-wrap tall">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Reviewed By</th>
+                  </tr>
+                </thead>
+                <tbody id="myMissedPunchBody">
+                  <tr><td colspan="6">No requests yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="managerTab" class="tab-panel">
+        <div class="panel-grid two-up">
+          <article class="card">
+            <div class="card-head">
+              <h2>Live punch feed</h2>
+              <p>This updates automatically as workers punch from their phones.</p>
+            </div>
+            <div class="mini-table-wrap tall">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Name</th>
+                    <th>Action</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody id="livePunchBody">
+                  <tr><td colspan="4">No live data yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Who is clocked in right now</h2>
+              <p>Derived from the latest punch for each person.</p>
+            </div>
+            <div id="activeNowList" class="list-stack empty-state">Nobody is currently clocked in.</div>
+          </article>
+        </div>
+      </section>
+
+      <section id="timesheetsTab" class="tab-panel hidden">
+        <div class="card">
+          <div class="card-head split-head">
+            <div>
+              <h2>Weekly timesheets</h2>
+              <p>Managers can sign each person’s weekly record. Signed sheets are locked.</p>
+            </div>
+            <div class="inline-field slim-field">
+              <label for="weekPicker">Week start</label>
+              <input id="weekPicker" type="date" />
+            </div>
+          </div>
+
+          <div class="mini-table-wrap tall">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Week</th>
+                  <th>Hours</th>
+                  <th>Status</th>
+                  <th>Signed by</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="timesheetBody">
+                <tr><td colspan="6">No timesheets yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="editPunchesTab" class="tab-panel hidden">
+        <div class="panel-grid two-up">
+          <article class="card">
+            <div class="card-head">
+              <h2>Manual correction</h2>
+              <p>Add a manual punch for someone when a correction is needed.</p>
+            </div>
+
+            <form id="manualPunchForm" class="grid-form">
+              <label>
+                <span>Name</span>
+                <input id="manualPunchNameInput" type="text" placeholder="Brandon Evanshine" required />
+              </label>
+              <label>
+                <span>Action</span>
+                <select id="manualPunchActionInput">
+                  <option value="clock_in">Clock In</option>
+                  <option value="start_lunch">Start Lunch</option>
+                  <option value="end_lunch">End Lunch</option>
+                  <option value="clock_out">Clock Out</option>
+                </select>
+              </label>
+              <label>
+                <span>Date</span>
+                <input id="manualPunchDateInput" type="date" required />
+              </label>
+              <label>
+                <span>Time</span>
+                <input id="manualPunchTimeInput" type="time" required />
+              </label>
+              <div class="form-actions full-width">
+                <button class="primary-btn" type="submit">Add manual punch</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Edit filters</h2>
+              <p>Filter punches by name to make edits faster.</p>
+            </div>
+
+            <div class="stack gap16">
+              <label>
+                <span>Filter by name</span>
+                <input id="editFilterNameInput" type="text" placeholder="Type a name or leave blank" />
+              </label>
+            </div>
+          </article>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Punch editor</h2>
+            <p>Edit time, action, or delete incorrect punches. Admin can also see who edited each record.</p>
+          </div>
+
+          <div class="mini-table-wrap tall">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Action</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Source</th>
+                  <th>Edited By</th>
+                  <th>Edited At</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="editPunchesBody">
+                <tr><td colspan="8">No punches yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="approvalsTab" class="tab-panel hidden">
+        <div class="card">
+          <div class="card-head">
+            <h2>Missed Punch Approvals</h2>
+            <p>Review and approve or deny employee missed-punch requests. Approved requests auto-create a punch.</p>
+          </div>
+
+          <div class="stack gap16" style="margin-bottom:12px;">
+            <div class="form-actions">
+              <button id="approvalFilterAll" class="secondary-btn" type="button">All</button>
+              <button id="approvalFilterPending" class="primary-btn" type="button">Pending</button>
+              <button id="approvalFilterApproved" class="ghost-btn" type="button">Approved</button>
+              <button id="approvalFilterDenied" class="ghost-btn" type="button">Denied</button>
+            </div>
+          </div>
+
+          <div class="mini-table-wrap tall">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Requested Date</th>
+                  <th>Time</th>
+                  <th>Action</th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="approvalListBody">
+                <tr><td colspan="7">No requests found.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="employeesTab" class="tab-panel hidden">
+        <div class="panel-grid two-up">
+          <article class="card">
+            <div class="card-head">
+              <h2>Add / Edit Employee</h2>
+              <p>Creates a record in the employees collection. No Firebase login needed for temps.</p>
+            </div>
+
+            <form id="employeeForm" class="grid-form">
+              <input id="employeeDocId" type="hidden" />
+              <label>
+                <span>Full name</span>
+                <input id="empNameInput" type="text" placeholder="John Doe" required />
+              </label>
+              <label>
+                <span>Employee number</span>
+                <input id="empNumberInput" type="text" placeholder="Auto-generated if blank" />
+              </label>
+              <label>
+                <span>Agency</span>
+                <select id="empAgencySelect">
+                  <option value="">Direct hire (no agency)</option>
+                  <option value="sterling_staffing">Sterling Staffing</option>
+                  <option value="excel_staffing">Excel Staffing</option>
+                </select>
+              </label>
+              <label>
+                <span>Assigned site</span>
+                <input id="empSiteInput" type="text" placeholder="e.g. Warehouse A" />
+              </label>
+              <label>
+                <span>Status</span>
+                <select id="empStatusSelect">
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="terminated">Terminated</option>
+                </select>
+              </label>
+              <div class="form-actions full-width">
+                <button class="primary-btn" type="submit">Save Employee</button>
+                <button id="empCancelEditBtn" class="ghost-btn hidden" type="button">Cancel Edit</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Employee Roster</h2>
+              <p>All employees for this company. Click a row to edit.</p>
+            </div>
+
+            <div class="stack gap16" style="margin-bottom:12px;">
+              <label>
+                <span>Filter</span>
+                <input id="empFilterInput" type="text" placeholder="Search by name or number…" />
+              </label>
+            </div>
+
+            <div class="mini-table-wrap tall">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Emp #</th>
+                    <th>Name</th>
+                    <th>Agency</th>
+                    <th>Site</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="employeeListBody">
+                  <tr><td colspan="6">No employees yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="adminTab" class="tab-panel hidden">
+        <div class="panel-grid two-up">
+          <article class="card">
+            <div class="card-head">
+              <h2>Create or update manager/admin profile</h2>
+              <p>This writes to Firestore. The person still needs a Firebase Auth account.</p>
+            </div>
+
+            <form id="userProfileForm" class="grid-form">
+              <label>
+                <span>User UID</span>
+                <input id="userUidInput" type="text" placeholder="Paste Firebase Auth UID" required />
+              </label>
+              <label>
+                <span>Full name</span>
+                <input id="userNameInput" type="text" placeholder="Brandon Evanshine" required />
+              </label>
+              <label>
+                <span>Email</span>
+                <input id="userEmailInput" type="email" placeholder="manager@company.com" required />
+              </label>
+              <label>
+                <span>Role</span>
+                <select id="userRoleInput">
+                  <option value="manager">Manager</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <label>
+                <span>Active</span>
+                <select id="userActiveInput">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <div class="form-actions full-width">
+                <button class="primary-btn" type="submit">Save profile</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Manager/Admin list</h2>
+              <p>Quick reference for people with dashboard access.</p>
+            </div>
+            <div class="mini-table-wrap tall">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Active</th>
+                  </tr>
+                </thead>
+                <tbody id="userListBody">
+                  <tr><td colspan="4">No users yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="agencyTab" class="tab-panel hidden">
+        <div class="card">
+          <div class="card-head">
+            <h2>Temp Agency Export</h2>
+            <p>Preview exactly what the agency will receive, then print or save it as a PDF.</p>
+          </div>
+
+          <div class="grid-form compact-form" style="margin-bottom:16px;">
+            <label>
+              <span>Worker</span>
+              <select id="agencyWorkerSelect">
+                <option value="">Select a worker</option>
+              </select>
+            </label>
+
+            <div class="form-actions full-width">
+              <button id="agencyPreviewBtn" class="primary-btn" type="button">Preview Sheet</button>
+              <button id="agencyPrintBtn" class="secondary-btn" type="button">Print / Save PDF</button>
+            </div>
+          </div>
+
+          <div id="agencyPreviewWrap" class="mini-table-wrap">
+            <div id="agencyPreview" style="padding:18px;">
+              <div class="empty-state">Choose a worker and click Preview Sheet.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
 </body>
 </html>

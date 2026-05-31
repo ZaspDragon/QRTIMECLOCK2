@@ -1,782 +1,148 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ─── Helpers ─────────────────────────────────────────
     function signedIn() {
       return request.auth != null;
     }
 
-    function userPath() {
-      return /databases/$(database)/documents/users/$(request.auth.uid);
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    function userExists() {
-      return signedIn() && exists(userPath());
+    function isAdmin() {
+      return signedIn() && myProfile().role == 'admin';
     }
 
-    function currentUser() {
-      return get(userPath()).data;
+    function isManager() {
+      return signedIn() && (myProfile().role == 'manager' || myProfile().role == 'admin');
     }
 
-    function role() {
-      return userExists() ? currentUser().role : null;
+    function isEmployee() {
+      return signedIn() && myProfile().role == 'employee';
     }
 
-    function agencyId() {
-      return userExists() ? currentUser().agencyId : null;
+    function myCompanyId() {
+      return myProfile().companyId;
     }
 
-    function workerId() {
-      return userExists() ? currentUser().workerId : null;
+    function sameCompany(resourceData) {
+      return signedIn() && resourceData.companyId == myCompanyId();
     }
 
-    function assignedClientIds() {
-      return userExists() && currentUser().assignedClientIds != null ? currentUser().assignedClientIds : [];
+    // ─── companies ───────────────────────────────────────
+    match /companies/{companyId} {
+      allow read: if signedIn() && myCompanyId() == companyId;
+      allow create, update, delete: if isAdmin() && myCompanyId() == companyId;
     }
 
-    function assignedSiteIds() {
-      return userExists() && currentUser().assignedSiteIds != null ? currentUser().assignedSiteIds : [];
+    // ─── agencies ────────────────────────────────────────
+    match /agencies/{agencyId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
     }
 
-    function isPlatformOwner() {
-      return role() == 'platformOwner';
-    }
-
-    function isAgencyOwner() {
-      return role() == 'agencyOwner';
-    }
-
-    function isAgencyAdmin() {
-      return role() == 'agencyAdmin';
-    }
-
-    function isAgencyStaff() {
-      return isAgencyOwner() || isAgencyAdmin();
-    }
-
-    function isClientManager() {
-      return role() == 'clientManager';
-    }
-
-    function isWorker() {
-      return role() == 'worker';
-    }
-
-    function sameAgency(targetAgencyId) {
-      return signedIn() && (isPlatformOwner() || agencyId() == targetAgencyId);
-    }
-
-    function sameAgencyResource() {
-      return sameAgency(resource.data.agencyId);
-    }
-
-    function sameAgencyRequest() {
-      return sameAgency(request.resource.data.agencyId);
-    }
-
-    function agencyStaffOwnsResource() {
-      return signedIn()
-        && isAgencyStaff()
-        && resource.data.agencyId is string
-        && resource.data.agencyId == agencyId();
-    }
-
-    function agencyStaffOwnsRequest() {
-      return signedIn()
-        && isAgencyStaff()
-        && request.resource.data.agencyId is string
-        && request.resource.data.agencyId == agencyId();
-    }
-
-    function assignedClient(clientId) {
-      return clientId != null && assignedClientIds().hasAny([clientId]);
-    }
-
-    function assignedSite(siteId) {
-      return siteId != null && assignedSiteIds().hasAny([siteId]);
-    }
-
-    function canReadClientScoped(clientId, siteId) {
-      return isPlatformOwner()
-        || (isAgencyStaff() && sameAgency(agencyId()))
-        || (isClientManager() && sameAgency(agencyId()) && (assignedClient(clientId) || assignedSite(siteId)))
-        || (isWorker() && sameAgency(agencyId()) && (assignedClient(clientId) || assignedSite(siteId)));
-    }
-
-    function workerOwnsRecord(targetWorkerId) {
-      return isWorker() && workerId() == targetWorkerId;
-    }
-
-    function signupOwnerCreate(targetAgencyId) {
-      return signedIn()
-        && targetAgencyId is string
-        && existsAfter(/databases/$(database)/documents/agencies/$(targetAgencyId))
-        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
-        && getAfter(/databases/$(database)/documents/agencies/$(targetAgencyId)).data.ownerUserId == request.auth.uid
-        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'agencyOwner'
-        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.agencyId == targetAgencyId;
-    }
-
-    function invitePath(inviteToken) {
-      return /databases/$(database)/documents/clientInvites/$(inviteToken);
-    }
-
-    function inviteExists(inviteToken) {
-      return inviteToken is string && exists(invitePath(inviteToken));
-    }
-
-    function inviteRecord(inviteToken) {
-      return get(invitePath(inviteToken)).data;
-    }
-
-    function publicInviteStatus(status) {
-      return ['pending', 'sent', 'opened'].hasAny([status]);
-    }
-
-    function selfCreatesClientManagerFromInvite() {
-      return signedIn()
-        && request.auth.uid == request.resource.data.id
-        && request.resource.data.role == 'clientManager'
-        && request.resource.data.agencyId is string
-        && request.resource.data.inviteToken is string
-        && inviteExists(request.resource.data.inviteToken)
-        && inviteRecord(request.resource.data.inviteToken).inviteToken == request.resource.data.inviteToken
-        && publicInviteStatus(inviteRecord(request.resource.data.inviteToken).status)
-        && inviteRecord(request.resource.data.inviteToken).role == 'clientManager'
-        && inviteRecord(request.resource.data.inviteToken).agencyId == request.resource.data.agencyId
-        && inviteRecord(request.resource.data.inviteToken).email == request.auth.token.email
-        && request.resource.data.email == request.auth.token.email
-        && request.resource.data.firstName == inviteRecord(request.resource.data.inviteToken).firstName
-        && request.resource.data.lastName == inviteRecord(request.resource.data.inviteToken).lastName
-        && request.resource.data.phone == inviteRecord(request.resource.data.inviteToken).phone
-        && request.resource.data.assignedClientIds == inviteRecord(request.resource.data.inviteToken).assignedClientIds
-        && request.resource.data.assignedSiteIds == inviteRecord(request.resource.data.inviteToken).assignedSiteIds
-        && request.resource.data.status == 'active'
-        && request.resource.data.workerId == '';
-    }
-
-    function clientInviteSelfAcceptUpdate() {
-      return signedIn()
-        && request.auth.token.email == resource.data.email
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.inviteToken == resource.data.inviteToken
-        && request.resource.data.agencyId == resource.data.agencyId
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.status == 'accepted'
-        && request.resource.data.acceptedBy == request.auth.uid
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-          'status',
-          'acceptedAt',
-          'acceptedBy',
-          'updatedAt',
-          'authAccountExists'
-        ]);
-    }
-
-    function clientApprovalFieldSet() {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-        'status',
-        'approvedBy',
-        'approvedAt',
-        'adminNotes',
-        'clientNotes',
-        'approvedHours',
-        'regularHours',
-        'overtimeHours',
-        'clientEdited',
-        'clientEditedBy',
-        'clientEditedAt',
-        'clientEditReason',
-        'originalApprovedHours',
-        'originalRegularHours',
-        'originalOvertimeHours',
-        'managerSignature',
-        'updatedAt'
-      ]);
-    }
-
-    function clientPunchFieldSet() {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-        'timestamp',
-        'action',
-        'notes',
-        'edited',
-        'editedBy',
-        'editedByRole',
-        'editedAt',
-        'editReason',
-        'originalTimestamp',
-        'correctedTimestamp',
-        'originalAction',
-        'correctedAction',
-        'updatedAt'
-      ]);
-    }
-
-    function approvalFieldSet() {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-        'status',
-        'reviewedBy',
-        'reviewedAt',
-        'note',
-        'clientEdited',
-        'clientEditedBy',
-        'clientEditedAt',
-        'clientEditReason',
-        'managerName',
-        'managerEmail',
-        'signatureDataUrl',
-        'signedAt',
-        'approvalNote',
-        'managerSignature',
-        'updatedAt'
-      ]);
-    }
-
-    function sitePunchDirectoryPath(siteId) {
-      return /databases/$(database)/documents/sitePunchDirectories/$(siteId);
-    }
-
-    function sitePunchDirectoryExists(siteId) {
-      return siteId is string && exists(sitePunchDirectoryPath(siteId));
-    }
-
-    function sitePunchDirectoryRecord(siteId) {
-      return get(sitePunchDirectoryPath(siteId)).data;
-    }
-
-    function agencyRecordPath(agencyDocId) {
-      return /databases/$(database)/documents/agencies/$(agencyDocId);
-    }
-
-    function agencyRecordExists(agencyDocId) {
-      return agencyDocId is string && exists(agencyRecordPath(agencyDocId));
-    }
-
-    function clientRecordPath(clientId) {
-      return /databases/$(database)/documents/clients/$(clientId);
-    }
-
-    function clientRecordExists(clientId) {
-      return clientId is string && exists(clientRecordPath(clientId));
-    }
-
-    function clientRecord(clientId) {
-      return get(clientRecordPath(clientId)).data;
-    }
-
-    function siteRecordPath(siteId) {
-      return /databases/$(database)/documents/sites/$(siteId);
-    }
-
-    function siteRecordExists(siteId) {
-      return siteId is string && exists(siteRecordPath(siteId));
-    }
-
-    function siteRecord(siteId) {
-      return get(siteRecordPath(siteId)).data;
-    }
-
-    function publicPunchAction(action) {
-      return ['clockIn', 'startLunch', 'endLunch', 'clockOut'].hasAny([action]);
-    }
-
-    function activePublicAgency(agencyDocId) {
-      return agencyRecordExists(agencyDocId);
-    }
-
-    function activePublicClient(clientId, agencyDocId) {
-      return clientRecordExists(clientId)
-        && clientRecord(clientId).agencyId == agencyDocId
-        && clientRecord(clientId).status != 'inactive';
-    }
-
-    function activePublicSite(siteId, agencyDocId, clientId) {
-      return siteRecordExists(siteId)
-        && siteRecord(siteId).agencyId == agencyDocId
-        && siteRecord(siteId).clientId == clientId
-        && siteRecord(siteId).status != 'inactive';
-    }
-
-    function publicSitePunchCreate() {
-      return request.resource.data.id == request.resource.id
-        && request.resource.data.keys().hasOnly([
-          'id',
-          'agencyId',
-          'companyId',
-          'companyName',
-          'clientId',
-          'clientName',
-          'siteId',
-          'siteName',
-          'workerId',
-          'workerName',
-          'workerMatched',
-          'action',
-          'timestamp',
-          'localDate',
-          'source',
-          'createdAt',
-          'deviceInfo'
-        ])
-        && request.resource.data.source == 'publicPunchPage'
-        && request.resource.data.agencyId is string
-        && request.resource.data.companyId is string
-        && request.resource.data.companyName is string
-        && request.resource.data.clientId is string
-        && request.resource.data.clientName is string
-        && request.resource.data.siteId is string
-        && request.resource.data.siteName is string
-        && request.resource.data.workerName is string
-        && request.resource.data.workerMatched is bool
-        && publicPunchAction(request.resource.data.action)
-        && request.resource.data.timestamp is string
-        && request.resource.data.localDate is string
-        && request.resource.data.createdAt is string
-        && request.resource.data.deviceInfo is string
-        && (request.resource.data.workerId == null || request.resource.data.workerId is string)
-        && request.resource.data.clientId == request.resource.data.companyId
-        && request.resource.data.clientName == request.resource.data.companyName
-        && activePublicAgency(request.resource.data.agencyId)
-        && activePublicClient(request.resource.data.clientId, request.resource.data.agencyId)
-        && activePublicSite(request.resource.data.siteId, request.resource.data.agencyId, request.resource.data.clientId)
-        && clientRecord(request.resource.data.clientId).name == request.resource.data.clientName
-        && siteRecord(request.resource.data.siteId).name == request.resource.data.siteName
-        && (
-          !sitePunchDirectoryExists(request.resource.data.siteId)
-          || (
-            sitePunchDirectoryRecord(request.resource.data.siteId).status == 'active'
-            && sitePunchDirectoryRecord(request.resource.data.siteId).qrEnabled == true
-            && sitePunchDirectoryRecord(request.resource.data.siteId).agencyId == request.resource.data.agencyId
-            && sitePunchDirectoryRecord(request.resource.data.siteId).companyId == request.resource.data.companyId
-            && sitePunchDirectoryRecord(request.resource.data.siteId).companyName == request.resource.data.companyName
-            && sitePunchDirectoryRecord(request.resource.data.siteId).siteId == request.resource.data.siteId
-            && sitePunchDirectoryRecord(request.resource.data.siteId).siteName == request.resource.data.siteName
-          )
-        );
-    }
-
-    function publicPunchRequestCreate() {
-      return request.resource.data.id == request.resource.id
-        && request.resource.data.keys().hasOnly([
-          'id',
-          'agencyId',
-          'companyId',
-          'companyName',
-          'clientId',
-          'clientName',
-          'siteId',
-          'siteName',
-          'workerId',
-          'workerName',
-          'workerMatched',
-          'requestedAction',
-          'requestedTimestamp',
-          'requestedLocalDate',
-          'reason',
-          'status',
-          'source',
-          'createdAt',
-          'updatedAt',
-          'deviceInfo'
-        ])
-        && request.resource.data.source == 'publicPunchPage'
-        && request.resource.data.status == 'pending'
-        && request.resource.data.agencyId is string
-        && request.resource.data.companyId is string
-        && request.resource.data.companyName is string
-        && request.resource.data.clientId is string
-        && request.resource.data.clientName is string
-        && request.resource.data.siteId is string
-        && request.resource.data.siteName is string
-        && request.resource.data.workerName is string
-        && request.resource.data.workerMatched is bool
-        && publicPunchAction(request.resource.data.requestedAction)
-        && request.resource.data.requestedTimestamp is string
-        && request.resource.data.requestedLocalDate is string
-        && request.resource.data.reason is string
-        && request.resource.data.createdAt is string
-        && request.resource.data.updatedAt is string
-        && request.resource.data.deviceInfo is string
-        && (request.resource.data.workerId == null || request.resource.data.workerId is string)
-        && request.resource.data.clientId == request.resource.data.companyId
-        && request.resource.data.clientName == request.resource.data.companyName
-        && activePublicAgency(request.resource.data.agencyId)
-        && activePublicClient(request.resource.data.clientId, request.resource.data.agencyId)
-        && activePublicSite(request.resource.data.siteId, request.resource.data.agencyId, request.resource.data.clientId)
-        && clientRecord(request.resource.data.clientId).name == request.resource.data.clientName
-        && siteRecord(request.resource.data.siteId).name == request.resource.data.siteName
-        && (
-          !sitePunchDirectoryExists(request.resource.data.siteId)
-          || (
-            sitePunchDirectoryRecord(request.resource.data.siteId).status == 'active'
-            && sitePunchDirectoryRecord(request.resource.data.siteId).qrEnabled == true
-            && sitePunchDirectoryRecord(request.resource.data.siteId).agencyId == request.resource.data.agencyId
-            && sitePunchDirectoryRecord(request.resource.data.siteId).companyId == request.resource.data.companyId
-            && sitePunchDirectoryRecord(request.resource.data.siteId).companyName == request.resource.data.companyName
-            && sitePunchDirectoryRecord(request.resource.data.siteId).siteId == request.resource.data.siteId
-            && sitePunchDirectoryRecord(request.resource.data.siteId).siteName == request.resource.data.siteName
-          )
-        );
-    }
-
-    match /agencies/{agencyDocId} {
+    // ─── users (login accounts) ──────────────────────────
+    match /users/{userId} {
       allow read: if signedIn() && (
-        isPlatformOwner()
-        || resource.data.ownerUserId == request.auth.uid
-        || ((isAgencyStaff() || isClientManager() || isWorker()) && agencyId() == agencyDocId)
+        request.auth.uid == userId ||
+        (isManager() && resource.data.companyId == myCompanyId())
       );
-      allow create: if signedIn()
-        && request.resource.data.id == agencyDocId
-        && request.resource.data.ownerUserId == request.auth.uid;
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && agencyId() == agencyDocId)
-      );
-      allow delete: if signedIn() && isPlatformOwner();
+      allow create, update: if isAdmin() && request.resource.data.companyId == myCompanyId();
+      allow delete: if isAdmin() && resource.data.companyId == myCompanyId();
     }
 
-    match /users/{userIdDoc} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || request.auth.uid == userIdDoc
-        || (isAgencyStaff() && resource.data.agencyId == agencyId())
-      );
+    // ─── employees (all workers, including temps) ────────
+    match /employees/{employeeId} {
+      // Authenticated manager/admin reads (full access for their company)
+      allow read: if signedIn() && sameCompany(resource.data);
 
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (
-          request.auth.uid == userIdDoc
-          && request.resource.data.id == request.auth.uid
-          && request.resource.data.role == 'agencyOwner'
-          && request.resource.data.agencyId is string
-          && existsAfter(/databases/$(database)/documents/agencies/$(request.resource.data.agencyId))
-          && getAfter(/databases/$(database)/documents/agencies/$(request.resource.data.agencyId)).data.ownerUserId == request.auth.uid
-        )
-        || (
-          isAgencyOwner()
-          && request.resource.data.agencyId == agencyId()
-        )
-        || (request.auth.uid == userIdDoc && selfCreatesClientManagerFromInvite())
-      );
+      // Public read for autocomplete (QR punch flow, unauthenticated)
+      allow read: if resource.data.status == 'active';
 
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || request.auth.uid == userIdDoc
-        || (isAgencyOwner() && resource.data.agencyId == agencyId())
-      );
+      // Manager creates
+      allow create: if isManager() && request.resource.data.companyId == myCompanyId();
 
-      allow delete: if signedIn() && isPlatformOwner();
+      // Auto-create from public QR punch flow (unauthenticated)
+      allow create: if
+        request.resource.data.name is string &&
+        request.resource.data.name.size() >= 2 &&
+        request.resource.data.name.size() <= 80 &&
+        request.resource.data.nameKey is string &&
+        request.resource.data.employeeNumber is string &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.source == 'auto_created';
+
+      allow update: if isManager() && sameCompany(resource.data);
+
+      // Allow the auto-created doc to write back its own employeeId
+      allow update: if
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['employeeId']);
+
+      allow delete: if isAdmin() && sameCompany(resource.data);
     }
 
-    match /clientInvites/{inviteId} {
-      allow get: if publicInviteStatus(resource.data.status) || (signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-      ));
-
-      allow list: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-      );
-
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (
-          isAgencyStaff()
-          && sameAgencyRequest()
-          && request.resource.data.role == 'clientManager'
-        )
-      );
-
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-        || clientInviteSelfAcceptUpdate()
-      );
-
-      allow delete: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && (sameAgencyResource() || sameAgencyRequest()))
-      );
-    }
-
-    match /sitePunchDirectories/{siteId} {
-      allow read: if true;
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsRequest()
-      );
-      allow update, delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || agencyStaffOwnsRequest()
-      );
-    }
-
-    match /clients/{clientId} {
-      allow get: if resource.data.status != 'inactive' || (signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && assignedClient(clientId))
-        || (isWorker() && sameAgencyResource() && assignedClient(clientId))
-      ));
-      allow list: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && assignedClient(clientId))
-        || (isWorker() && sameAgencyResource() && assignedClient(clientId))
-      );
-      allow create, update, delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsRequest()
-      );
-    }
-
-    match /sites/{siteId} {
-      allow get: if resource.data.status != 'inactive' || (signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && assignedSite(siteId))
-        || (isWorker() && sameAgencyResource() && assignedSite(siteId))
-      ));
-      allow list: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && assignedSite(siteId))
-        || (isWorker() && sameAgencyResource() && assignedSite(siteId))
-      );
-      allow create, update, delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsRequest()
-      );
-    }
-
-    match /workers/{workerDocId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && (assignedClient(resource.data.assignedClientId) || assignedSite(resource.data.assignedSiteId)))
-        || (workerOwnsRecord(workerDocId) && sameAgencyResource())
-      );
-      allow create, update, delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsRequest()
-      );
-    }
-
-    match /assignments/{assignmentId} {
-      allow read, delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-      );
-      allow create, update: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsRequest()
-      );
-    }
-
+    // ─── punches ─────────────────────────────────────────
     match /punches/{punchId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId)))
-        || (workerOwnsRecord(resource.data.workerId) && sameAgencyResource())
-      );
+      // Public QR punch creation (unauthenticated) with validation
+      allow create: if
+        request.resource.data.name is string &&
+        request.resource.data.name.size() >= 2 &&
+        request.resource.data.name.size() <= 80 &&
+        request.resource.data.nameKey is string &&
+        request.resource.data.nameKey.size() >= 2 &&
+        request.resource.data.action in ['clock_in', 'start_lunch', 'end_lunch', 'clock_out'] &&
+        request.resource.data.dateKey is string &&
+        request.resource.data.weekKey is string &&
+        request.resource.data.timestampMs is number &&
+        request.resource.data.source in ['public_qr', 'manual_manager', 'missed_punch_approved'];
 
-      allow create: if publicSitePunchCreate() || (
-        signedIn() && (
-          isPlatformOwner()
-          || agencyStaffOwnsRequest()
-          || (
-            isClientManager()
-            && sameAgencyRequest()
-            && (assignedClient(request.resource.data.clientId) || assignedSite(request.resource.data.siteId))
-            && request.resource.data.edited == true
-            && request.resource.data.editedBy == request.auth.uid
-            && request.resource.data.editedByRole == 'clientManager'
-          )
-          || (
-            isWorker()
-            && sameAgencyRequest()
-            && request.resource.data.workerId == workerId()
-            && request.resource.data.createdBy == request.auth.uid
-          )
-        )
-      );
+      // Managers/admins read all punches for their company
+      allow read: if isManager() && sameCompany(resource.data);
 
-      allow update, delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || agencyStaffOwnsRequest()
-      );
+      // Employees read only their own punches
+      allow read: if isEmployee() && sameCompany(resource.data) &&
+        resource.data.employeeId == myProfile().employeeId;
+
+      // Managers/admins can update/delete within their company
+      allow update, delete: if isManager() && sameCompany(resource.data);
     }
 
-    match /punchRequests/{requestId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || (isClientManager() && sameAgencyResource() && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId)))
-      );
-
-      allow create: if publicPunchRequestCreate() || (
-        signedIn() && (
-          isPlatformOwner()
-          || agencyStaffOwnsRequest()
-          || (
-            isClientManager()
-            && sameAgencyRequest()
-            && (assignedClient(request.resource.data.clientId) || assignedSite(request.resource.data.siteId))
-          )
-        )
-      );
-
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-        || agencyStaffOwnsRequest()
-        || (
-          isClientManager()
-          && sameAgencyResource()
-          && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId))
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-            'status',
-            'reviewedAt',
-            'reviewedBy',
-            'resolvedPunchId',
-            'updatedAt'
-          ])
-        )
-      );
-
-      allow delete: if signedIn() && (
-        isPlatformOwner()
-        || agencyStaffOwnsResource()
-      );
+    // ─── punch_edits (audit trail) ───────────────────────
+    match /punch_edits/{editId} {
+      allow create: if isManager();
+      allow read: if isManager();
     }
 
+    // ─── timesheets ──────────────────────────────────────
     match /timesheets/{timesheetId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-        || (isClientManager() && sameAgencyResource() && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId)))
-        || (workerOwnsRecord(resource.data.workerId) && sameAgencyResource())
-      );
+      allow read: if isManager() && sameCompany(resource.data);
 
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyRequest())
-      );
+      // Employees can read their own timesheets
+      allow read: if isEmployee() && sameCompany(resource.data) &&
+        resource.data.employeeId == myProfile().employeeId;
 
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyRequest())
-        || (
-          isClientManager()
-          && sameAgencyResource()
-          && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId))
-          && clientApprovalFieldSet()
-        )
-      );
-
-      allow delete: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-      );
+      allow create, update: if isManager() && request.resource.data.companyId == myCompanyId();
+      allow delete: if isAdmin() && sameCompany(resource.data);
     }
 
-    match /approvals/{approvalId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-        || (isClientManager() && sameAgencyResource() && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId)))
-        || (workerOwnsRecord(resource.data.workerId) && sameAgencyResource())
-      );
+    // ─── missedPunchRequests ─────────────────────────────
+    match /missedPunchRequests/{requestId} {
+      // Employees create requests for themselves
+      allow create: if signedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.companyId == myCompanyId() &&
+        request.resource.data.status == 'pending';
 
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyRequest())
-      );
+      // Employees read their own requests
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
 
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyRequest())
-        || (
-          isClientManager()
-          && sameAgencyResource()
-          && (assignedClient(resource.data.clientId) || assignedSite(resource.data.siteId))
-          && approvalFieldSet()
-        )
-      );
+      // Managers/admins read all requests for their company
+      allow read: if isManager() && sameCompany(resource.data);
 
-      allow delete: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-      );
-    }
-
-    match /payrollRuns/{payrollRunId} {
-      allow read, create, update, delete: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && (sameAgencyResource() || sameAgencyRequest()))
-      );
-    }
-
-    match /auditLogs/{auditId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && sameAgencyResource())
-      );
-
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (
-          request.resource.data.agencyId == agencyId()
-          && request.resource.data.userId == request.auth.uid
-          && request.resource.data.role == role()
-        )
-      );
-
-      allow update, delete: if false;
-    }
-
-    match /subscriptions/{subscriptionId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyOwner() && sameAgencyResource())
-      );
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyOwner() && sameAgencyRequest())
-        || (
-          request.resource.data.id == subscriptionId
-          && signupOwnerCreate(request.resource.data.agencyId)
-        )
-      );
-      allow update: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyOwner() && (sameAgencyResource() || sameAgencyRequest()))
-      );
-      allow delete: if signedIn() && isPlatformOwner();
-    }
-
-    match /settings/{settingsId} {
-      allow read: if signedIn() && (
-        isPlatformOwner()
-        || sameAgencyResource()
-      );
-      allow create: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && (sameAgencyResource() || sameAgencyRequest()))
-        || (
-          request.resource.data.id == settingsId
-          && signupOwnerCreate(request.resource.data.agencyId)
-        )
-      );
-      allow update, delete: if signedIn() && (
-        isPlatformOwner()
-        || (isAgencyStaff() && (sameAgencyResource() || sameAgencyRequest()))
-      );
+      // Managers/admins can approve/deny
+      allow update: if isManager() && sameCompany(resource.data);
     }
   }
 }
