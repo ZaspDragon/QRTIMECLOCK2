@@ -1,0 +1,10 @@
+{
+  "name": "qrtimeclock2-portaly-saas-upgrade",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Portaly SaaS upgrade mirrored into QRTIMECLOCK2.",
+  "scripts": {
+    "build": "node scripts/build-static.mjs",
+    "check": "node --check app.js && node --check functions/index.js"
+  }
+}
