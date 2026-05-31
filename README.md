@@ -4,34 +4,39 @@ This repo is meant to stay visually and functionally similar to the original QRT
 
 By default, `QRTIMECLOCK2` ships with blank Firebase config values, so it will not read or write the original app's data until you connect this repo to its own Firebase project.
 
-This version is built for **Firebase Hosting + Firebase Authentication + Cloud Firestore**.
+This version is built for **Firebase Hosting + Firebase Authentication + Cloud Firestore + Firebase Functions**.
 
 ## What it does
 
-- Employee signs in on phone
-- Employee scans personal QR badge or types employee code
-- Employee can:
+- Worker opens the same simple QRTimeClock-style punch page
+- Worker enters:
+  - name
+  - worker PIN
+  - company/client
+  - job site
+- Worker can:
   - Clock In
   - Start Lunch
   - End Lunch
   - Clock Out
-- Every punch saves instantly to Firestore
+- Worker can also:
+  - view **My Time**
+  - submit a **Request Time Fix**
+- Every punch saves instantly through Firebase Functions into Firestore
 - Manager sees live punches automatically
 - Manager can open weekly timesheets and sign each one
 - Signed timesheets can be reopened by a manager if needed
-- Admin page lets you manage the Firestore `users` profiles
-- QR tools page creates:
-  - Company QR poster
-  - Employee badge QR
+- Manager page lets you manage worker records, worker PINs, and Firestore `users` profiles
 
 ## Folder files
 
 - `index.html` — main app UI
 - `style.css` — styling
 - `app.js` — Firebase logic, punches, timesheets, QR tools
-- `firebase-config.js` — your Firebase config goes here
+- `firebase-config.js` — your Firebase config + Functions URL goes here
 - `firestore.rules` — starter Firestore security rules
 - `firebase.json` — Firebase Hosting config
+- `functions/index.js` — worker PIN verification, worker punch creation, and time-fix request endpoints
 
 ## Firebase setup
 
@@ -41,16 +46,18 @@ In Firebase Console:
 - Add a **Web App**
 - Enable **Authentication > Email/Password**
 - Enable **Cloud Firestore**
+- Enable **Cloud Functions**
 - Enable **Hosting**
 
 ### 2) Paste config into `firebase-config.js`
 Replace the placeholder values with your real Firebase web config.
 
 ### 3) Create Auth users
-Create your managers and employees in **Authentication**.
+Create your managers/admins in **Authentication**.
+Temp workers do **not** need Firebase Auth accounts.
 
 ### 4) Create matching Firestore user profiles
-For every person, create a doc in:
+For every manager/admin, create a doc in:
 
 `users/{uid}`
 
@@ -60,7 +67,7 @@ Example:
 {
   "name": "Brandon Evanshine",
   "email": "manager@company.com",
-  "employeeId": "EMP-1001",
+  "companyId": "acme_warehouse",
   "role": "manager",
   "active": true
 }
@@ -68,13 +75,52 @@ Example:
 
 Roles supported:
 - `employee`
+- `worker`
 - `manager`
 - `admin`
+- `clientManager`
+- `agencyOwner`
+- `agencyAdmin`
+- `platformOwner`
+
+### 5) Create worker records
+Create worker docs in:
+
+`workers/{workerId}`
+
+Example:
+
+```json
+{
+  "name": "Brandon Evanshine",
+  "displayName": "Brandon Evanshine",
+  "nameKey": "brandon_evanshine",
+  "employeeNumber": "EMP-1001",
+  "companyId": "acme_warehouse",
+  "clientId": "acme_warehouse",
+  "siteId": "dock_a",
+  "agencyId": "sterling_staffing",
+  "status": "active",
+  "pinHash": "<sha256 hash>"
+}
+```
+
+### 6) Deploy Functions
+
+From the `functions` folder:
+
+```bash
+npm install
+firebase deploy --only functions
+```
 
 ## Firestore collections used
 
 ### `users`
 Stores profile and role info.
+
+### `workers`
+Worker records used for PIN verification and QR punch matching.
 
 ### `punches`
 One document per punch.
@@ -83,10 +129,14 @@ Example:
 
 ```json
 {
-  "uid": "firebase-auth-uid",
+  "workerId": "EMP-1001",
   "employeeId": "EMP-1001",
   "name": "Brandon Evanshine",
   "action": "clock_in",
+  "companyId": "acme_warehouse",
+  "clientId": "acme_warehouse",
+  "siteId": "dock_a",
+  "agencyId": "sterling_staffing",
   "dateKey": "2026-04-13",
   "weekKey": "2026-04-13",
   "timestampMs": 1776110400000
@@ -127,11 +177,7 @@ Example fields:
 
 ### Company QR poster
 Generates a QR that opens your deployed app URL.
-Post this in the warehouse so employees can open the punch page fast.
-
-### Employee badge QR
-Generates a QR containing only the employee code.
-When scanned on the punch page, it fills the employee code box.
+Post this in the warehouse so workers can open the punch page fast.
 
 ## Deploy with Firebase Hosting
 
@@ -165,6 +211,12 @@ Deploy rules:
 firebase deploy --only firestore:rules
 ```
 
+Deploy functions:
+
+```bash
+firebase deploy --only functions
+```
+
 Deploy hosting:
 
 ```bash
@@ -185,9 +237,8 @@ firebase deploy --only hosting
 
 ## Important note
 
-This is a practical working starter app.
+This is a practical working QRTimeClock-style app.
 For payroll-grade compliance, you may eventually want:
-- Cloud Functions for server-side validation
 - audit trail logs
 - stronger rules around edits after signoff
 - payroll export approval flow

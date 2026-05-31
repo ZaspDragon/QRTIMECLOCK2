@@ -2,147 +2,207 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─── Helpers ─────────────────────────────────────────
     function signedIn() {
       return request.auth != null;
     }
 
     function myProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return signedIn()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : null;
     }
 
-    function isAdmin() {
-      return signedIn() && myProfile().role == 'admin';
-    }
-
-    function isManager() {
-      return signedIn() && (myProfile().role == 'manager' || myProfile().role == 'admin');
-    }
-
-    function isEmployee() {
-      return signedIn() && myProfile().role == 'employee';
+    function myRole() {
+      return signedIn() && myProfile() != null ? myProfile().role : '';
     }
 
     function myCompanyId() {
-      return myProfile().companyId;
+      return signedIn() && myProfile() != null
+        ? (myProfile().companyId != null ? myProfile().companyId : (myProfile().clientId != null ? myProfile().clientId : ''))
+        : '';
     }
 
-    function sameCompany(resourceData) {
-      return signedIn() && resourceData.companyId == myCompanyId();
+    function myAgencyId() {
+      return signedIn() && myProfile() != null && myProfile().agencyId != null
+        ? myProfile().agencyId
+        : '';
     }
 
-    // ─── companies ───────────────────────────────────────
+    function myWorkerId() {
+      return signedIn() && myProfile() != null
+        ? (myProfile().workerId != null ? myProfile().workerId : (myProfile().employeeId != null ? myProfile().employeeId : ''))
+        : '';
+    }
+
+    function myAssignedSiteIds() {
+      return signedIn() && myProfile() != null && myProfile().assignedSiteIds is list
+        ? myProfile().assignedSiteIds
+        : [];
+    }
+
+    function isPlatformOwner() {
+      return signedIn() && myRole() == 'platformOwner';
+    }
+
+    function isAdminLike() {
+      return signedIn() && myRole() in ['admin', 'agencyOwner', 'agencyAdmin', 'platformOwner'];
+    }
+
+    function isManagerLike() {
+      return signedIn() && (myRole() == 'manager' || isAdminLike());
+    }
+
+    function isClientManager() {
+      return signedIn() && myRole() == 'clientManager';
+    }
+
+    function isEmployeeAuth() {
+      return signedIn() && myRole() in ['employee', 'worker'];
+    }
+
+    function sameCompany(data) {
+      return data != null && myCompanyId() != '' && (
+        (data.companyId != null && data.companyId == myCompanyId()) ||
+        (data.clientId != null && data.clientId == myCompanyId())
+      );
+    }
+
+    function sameAgency(data) {
+      return data != null && myAgencyId() != '' && data.agencyId != null && data.agencyId == myAgencyId();
+    }
+
+    function sameScope(data) {
+      return isPlatformOwner() || sameCompany(data) || sameAgency(data);
+    }
+
+    function clientManagerScope(data) {
+      return data != null &&
+        isClientManager() &&
+        sameCompany(data) &&
+        (
+          myAssignedSiteIds().size() == 0 ||
+          (data.siteId != null && data.siteId in myAssignedSiteIds()) ||
+          (data.assignedSiteId != null && data.assignedSiteId in myAssignedSiteIds())
+        );
+    }
+
+    function managerReadScope(data) {
+      return signedIn() && (
+        (isManagerLike() && sameScope(data)) ||
+        clientManagerScope(data)
+      );
+    }
+
     match /companies/{companyId} {
-      allow read: if signedIn() && myCompanyId() == companyId;
-      allow create, update, delete: if isAdmin() && myCompanyId() == companyId;
+      allow read: if signedIn() && (
+        isPlatformOwner() ||
+        companyId == myCompanyId() ||
+        sameScope(resource.data)
+      );
+      allow create: if isAdminLike() && (
+        companyId == myCompanyId() ||
+        sameScope(request.resource.data)
+      );
+      allow update, delete: if isAdminLike() && (
+        companyId == myCompanyId() ||
+        sameScope(resource.data)
+      );
     }
 
-    // ─── agencies ────────────────────────────────────────
     match /agencies/{agencyId} {
       allow read: if signedIn();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAdminLike();
     }
 
-    // ─── users (login accounts) ──────────────────────────
     match /users/{userId} {
       allow read: if signedIn() && (
         request.auth.uid == userId ||
-        (isManager() && resource.data.companyId == myCompanyId())
+        (isManagerLike() && sameScope(resource.data))
       );
-      allow create, update: if isAdmin() && request.resource.data.companyId == myCompanyId();
-      allow delete: if isAdmin() && resource.data.companyId == myCompanyId();
+      allow create, update: if isAdminLike() && sameScope(request.resource.data);
+      allow delete: if isAdminLike() && sameScope(resource.data);
     }
 
-    // ─── employees (all workers, including temps) ────────
     match /employees/{employeeId} {
-      // Authenticated manager/admin reads (full access for their company)
-      allow read: if signedIn() && sameCompany(resource.data);
-
-      // Public read for autocomplete (QR punch flow, unauthenticated)
-      allow read: if resource.data.status == 'active';
-
-      // Manager creates
-      allow create: if isManager() && request.resource.data.companyId == myCompanyId();
-
-      // Auto-create from public QR punch flow (unauthenticated)
-      allow create: if
-        request.resource.data.name is string &&
-        request.resource.data.name.size() >= 2 &&
-        request.resource.data.name.size() <= 80 &&
-        request.resource.data.nameKey is string &&
-        request.resource.data.employeeNumber is string &&
-        request.resource.data.status == 'active' &&
-        request.resource.data.source == 'auto_created';
-
-      allow update: if isManager() && sameCompany(resource.data);
-
-      // Allow the auto-created doc to write back its own employeeId
-      allow update: if
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['employeeId']);
-
-      allow delete: if isAdmin() && sameCompany(resource.data);
+      allow read: if managerReadScope(resource.data);
+      allow create: if isManagerLike() && sameScope(request.resource.data);
+      allow update, delete: if isManagerLike() && sameScope(resource.data);
     }
 
-    // ─── punches ─────────────────────────────────────────
+    match /workers/{workerId} {
+      allow read: if managerReadScope(resource.data);
+      allow create: if isManagerLike() && sameScope(request.resource.data);
+      allow update, delete: if isManagerLike() && sameScope(resource.data);
+    }
+
     match /punches/{punchId} {
-      // Public QR punch creation (unauthenticated) with validation
-      allow create: if
-        request.resource.data.name is string &&
-        request.resource.data.name.size() >= 2 &&
-        request.resource.data.name.size() <= 80 &&
-        request.resource.data.nameKey is string &&
-        request.resource.data.nameKey.size() >= 2 &&
-        request.resource.data.action in ['clock_in', 'start_lunch', 'end_lunch', 'clock_out'] &&
-        request.resource.data.dateKey is string &&
-        request.resource.data.weekKey is string &&
-        request.resource.data.timestampMs is number &&
-        request.resource.data.source in ['public_qr', 'manual_manager', 'missed_punch_approved'];
-
-      // Managers/admins read all punches for their company
-      allow read: if isManager() && sameCompany(resource.data);
-
-      // Employees read only their own punches
-      allow read: if isEmployee() && sameCompany(resource.data) &&
-        resource.data.employeeId == myProfile().employeeId;
-
-      // Managers/admins can update/delete within their company
-      allow update, delete: if isManager() && sameCompany(resource.data);
+      allow read: if managerReadScope(resource.data) || (
+        isEmployeeAuth() &&
+        sameScope(resource.data) &&
+        (
+          (resource.data.employeeId != null && resource.data.employeeId == myWorkerId()) ||
+          (resource.data.workerId != null && resource.data.workerId == myWorkerId())
+        )
+      );
+      allow create: if isManagerLike() && sameScope(request.resource.data);
+      allow update, delete: if managerReadScope(resource.data);
     }
 
-    // ─── punch_edits (audit trail) ───────────────────────
     match /punch_edits/{editId} {
-      allow create: if isManager();
-      allow read: if isManager();
+      allow create: if isManagerLike() && sameScope(request.resource.data);
+      allow read: if isManagerLike() && sameScope(resource.data);
+      allow update, delete: if false;
     }
 
-    // ─── timesheets ──────────────────────────────────────
     match /timesheets/{timesheetId} {
-      allow read: if isManager() && sameCompany(resource.data);
-
-      // Employees can read their own timesheets
-      allow read: if isEmployee() && sameCompany(resource.data) &&
-        resource.data.employeeId == myProfile().employeeId;
-
-      allow create, update: if isManager() && request.resource.data.companyId == myCompanyId();
-      allow delete: if isAdmin() && sameCompany(resource.data);
+      allow read: if managerReadScope(resource.data) || (
+        isEmployeeAuth() &&
+        sameScope(resource.data) &&
+        (
+          (resource.data.employeeId != null && resource.data.employeeId == myWorkerId()) ||
+          (resource.data.workerId != null && resource.data.workerId == myWorkerId())
+        )
+      );
+      allow create, update: if managerReadScope(request.resource.data) || (isManagerLike() && sameScope(request.resource.data));
+      allow delete: if isAdminLike() && sameScope(resource.data);
     }
 
-    // ─── missedPunchRequests ─────────────────────────────
     match /missedPunchRequests/{requestId} {
-      // Employees create requests for themselves
-      allow create: if signedIn() &&
+      allow create: if (isEmployeeAuth() &&
         request.resource.data.uid == request.auth.uid &&
-        request.resource.data.companyId == myCompanyId() &&
-        request.resource.data.status == 'pending';
+        sameCompany(request.resource.data) &&
+        request.resource.data.status == 'pending') ||
+        (isManagerLike() && sameScope(request.resource.data));
 
-      // Employees read their own requests
-      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow read: if (isEmployeeAuth() && resource.data.uid == request.auth.uid) ||
+        managerReadScope(resource.data);
 
-      // Managers/admins read all requests for their company
-      allow read: if isManager() && sameCompany(resource.data);
+      allow update: if managerReadScope(resource.data);
+      allow delete: if isManagerLike() && sameScope(resource.data);
+    }
 
-      // Managers/admins can approve/deny
-      allow update: if isManager() && sameCompany(resource.data);
+    match /punchRequests/{requestId} {
+      allow create: if (isEmployeeAuth() &&
+        request.resource.data.uid == request.auth.uid &&
+        sameCompany(request.resource.data) &&
+        request.resource.data.status == 'pending') ||
+        (isManagerLike() && sameScope(request.resource.data));
+
+      allow read: if (isEmployeeAuth() && resource.data.uid == request.auth.uid) ||
+        managerReadScope(resource.data);
+
+      allow update: if managerReadScope(resource.data);
+      allow delete: if isManagerLike() && sameScope(resource.data);
+    }
+
+    match /auditLogs/{logId} {
+      allow create: if managerReadScope(request.resource.data);
+      allow read: if managerReadScope(resource.data);
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

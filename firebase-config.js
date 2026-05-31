@@ -13,8 +13,10 @@ export const firebaseConfig = {
 
 export const firebaseEnabled = Object.values(firebaseConfig).every((value) => String(value || "").trim().length > 0);
 
+export const functionsBaseUrl = "";
+
 export const appSettings = {
   companyName: "QR TimeClock Pro",
   defaultAppUrl: `${window.location.origin}${runtimeBasePath || "/"}`,
-  setupMessage: "QRTIMECLOCK2 is isolated from the original QRTimeClock Pro data. Add this repo's own Firebase web config before using live punches or manager sign-in."
+  setupMessage: "QRTIMECLOCK2 is isolated from the original QRTimeClock Pro data. Add this repo's own Firebase web config and Functions URL before using live punches or manager sign-in."
 };

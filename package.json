@@ -6,6 +6,6 @@
   "description": "QRTimeClock Pro mirror for QRTIMECLOCK2.",
   "scripts": {
     "build": "node scripts/build-static.mjs",
-    "check": "node --check app.js"
+    "check": "node --check app.js && node --check functions/index.js"
   }
 }

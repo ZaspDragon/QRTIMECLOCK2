@@ -1,4 +1,4 @@
-import { firebaseConfig, firebaseEnabled, appSettings } from './firebase-config.js';
+import { firebaseConfig, firebaseEnabled, functionsBaseUrl, appSettings } from './firebase-config.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
 import {
   getAuth,
@@ -51,6 +51,7 @@ const state = {
   workerUnsub: null,
   workerEmployee: null,      // looked-up employee record for public punch
   publicEmployees: [],       // cached employee list for public QR autocomplete
+  workerTimeSnapshot: null,
   allPunchRows: [],
   selectedWeekPunchRows: [],
   selectedWeekTimesheetDocs: {},
@@ -61,6 +62,9 @@ const state = {
 
 const els = {
   workerNameInput: document.getElementById('workerNameInput'),
+  workerPinInput: document.getElementById('workerPinInput'),
+  workerClientInput: document.getElementById('workerClientInput'),
+  workerSiteInput: document.getElementById('workerSiteInput'),
   workerAutocompleteList: document.getElementById('workerAutocompleteList'),
   workerLookupStatus: document.getElementById('workerLookupStatus'),
   workerNameValue: document.getElementById('workerNameValue'),
@@ -69,6 +73,21 @@ const els = {
   workerStatusValue: document.getElementById('workerStatusValue'),
   workerStatusMessage: document.getElementById('workerStatusMessage'),
   workerHistoryBody: document.getElementById('workerHistoryBody'),
+  workerViewTimeBtn: document.getElementById('workerViewTimeBtn'),
+  workerRequestFixBtn: document.getElementById('workerRequestFixBtn'),
+  workerMyTimePanel: document.getElementById('workerMyTimePanel'),
+  workerFixPanel: document.getElementById('workerFixPanel'),
+  workerLoadTimeBtn: document.getElementById('workerLoadTimeBtn'),
+  workerTodayHoursValue: document.getElementById('workerTodayHoursValue'),
+  workerWeekHoursValue: document.getElementById('workerWeekHoursValue'),
+  workerLunchMinutesValue: document.getElementById('workerLunchMinutesValue'),
+  workerApprovalStatusValue: document.getElementById('workerApprovalStatusValue'),
+  workerMyTimeBody: document.getElementById('workerMyTimeBody'),
+  workerFixForm: document.getElementById('workerFixForm'),
+  workerFixActionInput: document.getElementById('workerFixActionInput'),
+  workerFixDateInput: document.getElementById('workerFixDateInput'),
+  workerFixTimeInput: document.getElementById('workerFixTimeInput'),
+  workerFixReasonInput: document.getElementById('workerFixReasonInput'),
 
   authCard: document.getElementById('authCard'),
   appShell: document.getElementById('appShell'),
@@ -135,8 +154,10 @@ const els = {
   employeeDocId: document.getElementById('employeeDocId'),
   empNameInput: document.getElementById('empNameInput'),
   empNumberInput: document.getElementById('empNumberInput'),
-  empAgencySelect: document.getElementById('empAgencySelect'),
+  empAgencyInput: document.getElementById('empAgencyInput'),
+  empClientInput: document.getElementById('empClientInput'),
   empSiteInput: document.getElementById('empSiteInput'),
+  empPinInput: document.getElementById('empPinInput'),
   empStatusSelect: document.getElementById('empStatusSelect'),
   empCancelEditBtn: document.getElementById('empCancelEditBtn'),
   empFilterInput: document.getElementById('empFilterInput'),
@@ -154,6 +175,7 @@ init();
 
 async function init() {
   wireEvents();
+  prefillPublicPunchContext();
 
   if (!firebaseReady()) {
     showLoggedOut();
@@ -172,7 +194,6 @@ async function init() {
     if (els.workerNameValue) els.workerNameValue.textContent = pretty;
     // Try to match to an existing employee
     restoreWorkerFromName(pretty);
-    attachWorkerLiveView(pretty);
   }
 
   if (els.weekPicker) {
@@ -186,6 +207,14 @@ async function init() {
   if (els.manualPunchTimeInput) {
     els.manualPunchTimeInput.value = formatTimeForInput(Date.now());
   }
+  if (els.workerFixDateInput) {
+    els.workerFixDateInput.value = formatDateInput(new Date());
+  }
+  if (els.workerFixTimeInput) {
+    els.workerFixTimeInput.value = formatTimeForInput(Date.now());
+  }
+
+  applyWorkerAvailabilityState();
 
   onAuthStateChanged(auth, async (user) => {
     clearLiveListeners();
@@ -244,6 +273,10 @@ function wireEvents() {
   els.workerNameInput?.addEventListener('input', debounce(handleWorkerNameAutocomplete, 250));
   els.workerNameInput?.addEventListener('focus', () => handleWorkerNameAutocomplete());
   els.workerNameInput?.addEventListener('keydown', handleAutocompleteKeydown);
+  els.workerViewTimeBtn?.addEventListener('click', () => toggleWorkerPanel('time'));
+  els.workerRequestFixBtn?.addEventListener('click', () => toggleWorkerPanel('fix'));
+  els.workerLoadTimeBtn?.addEventListener('click', loadWorkerTimeSnapshot);
+  els.workerFixForm?.addEventListener('submit', handlePublicPunchRequestSubmit);
 
   // Close autocomplete on outside click
   document.addEventListener('click', (e) => {
@@ -309,26 +342,7 @@ function wireEvents() {
 
 // ─── Public employee loading & autocomplete ─────────────
 async function loadPublicEmployees() {
-  if (!firebaseReady()) {
-    state.publicEmployees = [];
-    return;
-  }
-  const urlCompanyId = new URLSearchParams(window.location.search).get('company') || '';
-  try {
-    // Simple query: filter by status only (no orderBy to avoid composite index requirement)
-    const constraints = [];
-    if (urlCompanyId) constraints.push(where('companyId', '==', urlCompanyId));
-    constraints.push(where('status', '==', 'active'));
-
-    const q = query(collection(db, 'employees'), ...constraints);
-    const snap = await getDocs(q);
-    state.publicEmployees = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  } catch (error) {
-    console.warn('Could not load employees for autocomplete:', error.message);
-    state.publicEmployees = [];
-  }
+  state.publicEmployees = [];
 }
 
 function restoreWorkerFromName(name) {
@@ -499,117 +513,36 @@ function escapeHTML(str) {
 }
 
 async function handleWorkerPunch(action) {
-  if (!requireFirebaseReady('save punches')) return;
-
-  let emp = state.workerEmployee;
-  const typedName = prettifyHumanName(els.workerNameInput?.value.trim() || '');
-
-  // If nothing selected but a name was typed, treat as new worker
-  if (!emp && typedName.length >= 2) {
-    emp = { _isNew: true, name: typedName, nameKey: normalizeName(typedName) };
-    state.workerEmployee = emp;
-  }
-
-  if (!emp || !emp.name) {
-    toast('Type your name first.', true);
+  if (!workerFunctionsReady()) {
+    toast('Worker PIN punching is not connected yet.', true);
     return;
   }
-
-  if (emp.status === 'inactive' || emp.status === 'terminated') {
-    toast('Your employee record is not active. Contact your manager.', true);
-    return;
-  }
-
-  const urlCompanyId = new URLSearchParams(window.location.search).get('company') || '';
-
-  // Auto-create employee if new
-  if (emp._isNew) {
-    try {
-      const empNumber = await generateNextPublicEmployeeNumber();
-      const newPayload = {
-        name: emp.name,
-        nameKey: normalizeName(emp.name),
-        employeeNumber: empNumber,
-        companyId: urlCompanyId || '',
-        agencyId: '',
-        assignedSiteId: '',
-        status: 'active',
-        source: 'auto_created',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      const newRef = await addDoc(collection(db, 'employees'), newPayload);
-      await updateDoc(newRef, { employeeId: newRef.id });
-
-      emp = { id: newRef.id, employeeId: newRef.id, ...newPayload };
-      state.workerEmployee = emp;
-
-      // Update local cache
-      state.publicEmployees.push(emp);
-
-      if (els.workerLookupStatus) {
-        els.workerLookupStatus.textContent = `✓ Created: ${emp.name} (${empNumber}). Punching…`;
-        els.workerLookupStatus.style.borderColor = 'rgba(43,213,118,0.4)';
-      }
-    } catch (error) {
-      console.warn('Auto-create employee skipped (rules may not be deployed yet):', error.message);
-      // Still allow the punch — employee record will be created by manager or once rules are deployed
-      emp = { name: emp.name, nameKey: normalizeName(emp.name), employeeId: '', employeeNumber: '' };
-      state.workerEmployee = emp;
-    }
-  }
-
-  const name = emp.name || '';
-  const nameKey = normalizeName(name);
-  const now = new Date();
-  const nowMs = Date.now();
-  const dateKey = formatDateKey(now);
-  const weekKey = formatDateKey(getMondayDate(now));
+  const workerContext = collectWorkerIdentity();
+  if (!workerContext) return;
 
   try {
-    await addDoc(collection(db, 'punches'), {
-      name,
-      nameKey,
-      action,
-      timestamp: serverTimestamp(),
-      timestampMs: nowMs,
-      dateKey,
-      weekKey,
-      source: 'public_qr',
-      createdAt: serverTimestamp(),
-      employeeId: emp.employeeId || emp.id || '',
-      employeeNumber: emp.employeeNumber || '',
-      companyId: emp.companyId || urlCompanyId || '',
-      agencyId: emp.agencyId || '',
+    const result = await callWorkerFunction('createWorkerPunch', {
+      ...workerContext,
+      action
     });
+    const punch = result?.punch || {};
+    const savedAt = Number(punch.timestampMs || Date.now());
 
     if (els.workerLastActionValue) els.workerLastActionValue.textContent = prettyAction(action);
-    if (els.workerLastPunchValue) els.workerLastPunchValue.textContent = formatDateTime(nowMs);
+    if (els.workerLastPunchValue) els.workerLastPunchValue.textContent = formatDateTime(savedAt);
     if (els.workerStatusValue) els.workerStatusValue.textContent = statusLabelForAction(action);
     if (els.workerStatusMessage) {
-      els.workerStatusMessage.textContent = `${prettyAction(action)} saved for ${name} at ${formatDateTime(nowMs)}.`;
+      els.workerStatusMessage.textContent = `${prettyAction(action)} saved for ${workerContext.workerName} at ${formatDateTime(savedAt)}.`;
     }
 
-    attachWorkerLiveView(name);
-    localStorage.setItem('workerPunchName', name);
+    localStorage.setItem('workerPunchName', workerContext.workerName);
+    await loadWorkerTimeSnapshot();
     toast(`${prettyAction(action)} saved.`);
   } catch (error) {
     console.error(error);
-    toast(error.message || 'Could not save punch.', true);
+    toast(error.message || "Punch didn't go through. Submit a time fix request.", true);
+    toggleWorkerPanel('fix');
   }
-}
-
-async function generateNextPublicEmployeeNumber() {
-  // Check both local cache and generate next EMP number
-  const prefix = 'EMP-';
-  const existing = (state.publicEmployees || [])
-    .map((e) => e.employeeNumber || '')
-    .filter((n) => n.startsWith(prefix))
-    .map((n) => parseInt(n.replace(prefix, ''), 10))
-    .filter((n) => !isNaN(n));
-
-  const maxNum = existing.length ? Math.max(...existing) : 1000;
-  return prefix + String(maxNum + 1);
 }
 
 async function handleManualPunchSubmit(event) {
@@ -659,7 +592,8 @@ async function handleManualPunchSubmit(event) {
       createdAt: serverTimestamp(),
       createdBy: state.profile?.name || state.me?.email || 'Manager',
       companyId: state.companyId || '',
-      agencyId: '',
+      clientId: state.companyId || '',
+      agencyId: state.agencyId || '',
       employeeId: '',
     });
 
@@ -675,6 +609,8 @@ async function handleManualPunchSubmit(event) {
       editedBy: state.profile?.name || state.me?.email || 'Manager',
       editedAt: serverTimestamp(),
       companyId: state.companyId || '',
+      clientId: state.companyId || '',
+      agencyId: state.agencyId || '',
     });
 
     els.manualPunchForm?.reset();
@@ -689,7 +625,7 @@ async function handleManualPunchSubmit(event) {
 }
 
 function attachWorkerLiveView(name) {
-  if (!firebaseReady()) return;
+  if (!firebaseReady() || !state.me) return;
   if (state.workerUnsub) {
     try { state.workerUnsub(); } catch (_) {}
     state.workerUnsub = null;
@@ -809,6 +745,237 @@ function showLoggedOut() {
   // Reset header
   const headerP = document.querySelector('.topbar p');
   if (headerP) headerP.textContent = 'Mobile punch tracking with live manager visibility and weekly signoff.';
+  applyWorkerAvailabilityState();
+}
+
+function workerFunctionsReady() {
+  return firebaseReady() && String(functionsBaseUrl || '').trim().length > 0;
+}
+
+function setWorkerControlsDisabled(disabled, title = '') {
+  document.querySelectorAll('.worker-action-btn').forEach((btn) => {
+    btn.disabled = disabled;
+    btn.title = disabled ? title : '';
+  });
+  [els.workerViewTimeBtn, els.workerRequestFixBtn, els.workerLoadTimeBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.disabled = disabled;
+    btn.title = disabled ? title : '';
+  });
+  if (els.workerFixActionInput) els.workerFixActionInput.disabled = disabled;
+  if (els.workerFixDateInput) els.workerFixDateInput.disabled = disabled;
+  if (els.workerFixTimeInput) els.workerFixTimeInput.disabled = disabled;
+  if (els.workerFixReasonInput) els.workerFixReasonInput.disabled = disabled;
+}
+
+function applyWorkerAvailabilityState() {
+  if (!firebaseReady()) {
+    setWorkerControlsDisabled(true, appSettings.setupMessage);
+    return;
+  }
+
+  if (!workerFunctionsReady()) {
+    const setupMessage = 'Worker PIN punching is not connected yet. Add this repo\'s Firebase Functions URL to enable worker clock in, My Time, and time-fix requests.';
+    if (els.workerLookupStatus) {
+      els.workerLookupStatus.textContent = setupMessage;
+      els.workerLookupStatus.style.borderColor = 'rgba(255,202,87,0.45)';
+    }
+    if (els.workerStatusMessage) {
+      els.workerStatusMessage.textContent = setupMessage;
+    }
+    setWorkerControlsDisabled(true, setupMessage);
+    return;
+  }
+
+  if (els.workerLookupStatus) {
+    els.workerLookupStatus.textContent = 'Enter your name, PIN, company, and job site to punch.';
+    els.workerLookupStatus.style.borderColor = '';
+  }
+  if (els.workerStatusMessage) {
+    els.workerStatusMessage.textContent = 'Enter your name and punch.';
+  }
+  setWorkerControlsDisabled(false, '');
+}
+
+function toggleWorkerPanel(panel) {
+  const showTime = panel === 'time';
+  const showFix = panel === 'fix';
+  els.workerMyTimePanel?.classList.toggle('hidden', !showTime);
+  els.workerFixPanel?.classList.toggle('hidden', !showFix);
+}
+
+function prefillPublicPunchContext() {
+  const params = new URLSearchParams(window.location.search);
+  const clientValue = params.get('clientId') || params.get('company') || '';
+  const siteValue = params.get('siteId') || params.get('site') || '';
+  if (els.workerClientInput && clientValue) {
+    els.workerClientInput.value = clientValue;
+    els.workerClientInput.readOnly = true;
+  }
+  if (els.workerSiteInput && siteValue) {
+    els.workerSiteInput.value = siteValue;
+    els.workerSiteInput.readOnly = true;
+  }
+}
+
+function collectWorkerIdentity() {
+  const workerName = prettifyHumanName(els.workerNameInput?.value.trim() || '');
+  const pin = String(els.workerPinInput?.value || '').trim();
+  const clientId = String(els.workerClientInput?.value || '').trim();
+  const siteId = String(els.workerSiteInput?.value || '').trim();
+  const params = new URLSearchParams(window.location.search);
+  const agencyId = String(params.get('agencyId') || '').trim();
+
+  if (!workerName) {
+    toast('Enter your name first.', true);
+    return null;
+  }
+  if (!pin) {
+    toast('Enter your worker PIN first.', true);
+    return null;
+  }
+  if (!clientId) {
+    toast('Enter the company/client first.', true);
+    return null;
+  }
+  if (!siteId) {
+    toast('Enter the job site first.', true);
+    return null;
+  }
+
+  return {
+    agencyId,
+    clientId,
+    siteId,
+    workerName,
+    pin
+  };
+}
+
+async function loadWorkerTimeSnapshot() {
+  if (!workerFunctionsReady()) {
+    toast('Worker self-service is not connected yet.', true);
+    return;
+  }
+  const workerContext = collectWorkerIdentity();
+  if (!workerContext) return;
+  try {
+    const snapshot = await callWorkerFunction('verifyWorkerPinAndGetTime', workerContext);
+    state.workerTimeSnapshot = snapshot || null;
+    renderWorkerTimeSnapshot(snapshot || {});
+    toggleWorkerPanel('time');
+  } catch (error) {
+    console.error(error);
+    toast(error.message || 'Could not load your time.', true);
+  }
+}
+
+function renderWorkerTimeSnapshot(snapshot) {
+  const summary = snapshot?.summary || {};
+  const punches = Array.isArray(snapshot?.recentPunches) ? snapshot.recentPunches : [];
+
+  if (els.workerTodayHoursValue) els.workerTodayHoursValue.textContent = Number(summary.todayHours || 0).toFixed(2);
+  if (els.workerWeekHoursValue) els.workerWeekHoursValue.textContent = Number(summary.weekHours || 0).toFixed(2);
+  if (els.workerLunchMinutesValue) els.workerLunchMinutesValue.textContent = `${Number(summary.lunchMinutes || 0)} min`;
+  if (els.workerApprovalStatusValue) els.workerApprovalStatusValue.textContent = summary.approvalStatus || 'Pending';
+  renderWorkerRecentPunches(punches);
+
+  if (!els.workerMyTimeBody) return;
+  if (!punches.length) {
+    els.workerMyTimeBody.innerHTML = '<tr><td colspan="3">No punches found yet.</td></tr>';
+    return;
+  }
+
+  els.workerMyTimeBody.innerHTML = punches.map((row) => `
+    <tr>
+      <td>${formatDateTime(row.timestampMs)}</td>
+      <td>${prettyAction(row.action)}</td>
+      <td>${escapeHtml(row.status || summary.approvalStatus || 'Pending')}</td>
+    </tr>
+  `).join('');
+}
+
+function renderWorkerRecentPunches(rows) {
+  if (!els.workerHistoryBody) return;
+  if (!rows.length) {
+    els.workerHistoryBody.innerHTML = '<tr><td colspan="2">No punches yet.</td></tr>';
+    return;
+  }
+
+  els.workerHistoryBody.innerHTML = rows.slice(0, 10).map((row) => `
+    <tr>
+      <td>${formatDateTime(row.timestampMs)}</td>
+      <td>${prettyAction(row.action)}</td>
+    </tr>
+  `).join('');
+}
+
+async function handlePublicPunchRequestSubmit(event) {
+  event.preventDefault();
+  if (!workerFunctionsReady()) {
+    toast('Worker self-service is not connected yet.', true);
+    return;
+  }
+  const workerContext = collectWorkerIdentity();
+  if (!workerContext) return;
+
+  const requestedAction = els.workerFixActionInput?.value || '';
+  const dateValue = els.workerFixDateInput?.value || '';
+  const timeValue = els.workerFixTimeInput?.value || '';
+  const reason = String(els.workerFixReasonInput?.value || '').trim();
+
+  if (!requestedAction || !dateValue || !timeValue || !reason) {
+    toast('Fill out every time fix field.', true);
+    return;
+  }
+
+  try {
+    await callWorkerFunction('createPunchRequest', {
+      ...workerContext,
+      requestedAction,
+      requestedTimestampMs: parseLocalDateAndTime(dateValue, timeValue),
+      requestedLocalDate: dateValue,
+      reason
+    });
+    els.workerFixForm?.reset();
+    if (els.workerFixDateInput) els.workerFixDateInput.value = formatDateInput(new Date());
+    if (els.workerFixTimeInput) els.workerFixTimeInput.value = formatTimeForInput(Date.now());
+    toast('Time fix request submitted.');
+  } catch (error) {
+    console.error(error);
+    toast(error.message || 'Could not submit your request.', true);
+  }
+}
+
+async function callWorkerFunction(functionName, payload) {
+  const baseUrl = String(functionsBaseUrl || '').trim().replace(/\/$/, '');
+  if (!baseUrl) {
+    throw new Error(appSettings.setupMessage);
+  }
+
+  const response = await fetch(`${baseUrl}/${functionName}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      ...payload,
+      deviceInfo: navigator.userAgent || ''
+    })
+  });
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = {};
+  }
+
+  if (!response.ok || data.error) {
+    throw new Error(data.error || `Worker action failed (${response.status}).`);
+  }
+
+  return data;
 }
 
 function firebaseReady() {
@@ -831,10 +998,7 @@ function renderFirebaseUnavailable() {
   if (els.workerStatusMessage) {
     els.workerStatusMessage.textContent = appSettings.setupMessage;
   }
-  document.querySelectorAll('.worker-action-btn').forEach((btn) => {
-    btn.disabled = true;
-    btn.title = appSettings.setupMessage;
-  });
+  setWorkerControlsDisabled(true, appSettings.setupMessage);
   if (els.emailInput) els.emailInput.placeholder = 'Manager email';
   if (els.passwordInput) els.passwordInput.placeholder = 'Password';
   if (els.resetPasswordBtn) {
@@ -945,7 +1109,7 @@ function attachManagerLiveViews() {
     onSnapshot(
       liveQuery,
       (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter(isRowVisibleToProfile);
         state.allPunchRows = rows;
         renderLivePunches(rows);
         renderActiveNow(rows);
@@ -1128,6 +1292,10 @@ async function editPunch(punchId) {
     await addDoc(collection(db, 'punch_edits'), {
       punchId,
       type: 'edit',
+      companyId: row.companyId || state.companyId || '',
+      clientId: row.clientId || row.companyId || state.companyId || '',
+      siteId: row.siteId || row.assignedSiteId || '',
+      agencyId: row.agencyId || state.agencyId || '',
       original: {
         name: row.name || '',
         nameKey: row.nameKey || '',
@@ -1174,6 +1342,10 @@ async function deletePunchRecord(punchId) {
     await addDoc(collection(db, 'punch_edits'), {
       punchId,
       type: 'delete',
+      companyId: row?.companyId || state.companyId || '',
+      clientId: row?.clientId || row?.companyId || state.companyId || '',
+      siteId: row?.siteId || row?.assignedSiteId || '',
+      agencyId: row?.agencyId || state.agencyId || '',
       original: row || null,
       editedBy: state.profile?.name || state.me?.email || 'Manager',
       editedAt: serverTimestamp()
@@ -1207,7 +1379,7 @@ function attachTimesheetView() {
     onSnapshot(
       punchesQuery,
       (snap) => {
-        state.selectedWeekPunchRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.selectedWeekPunchRows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter(isRowVisibleToProfile);
         renderDerivedTimesheets();
         populateAgencyWorkerSelect();
         renderAgencyPreview();
@@ -1225,7 +1397,10 @@ function attachTimesheetView() {
       (snap) => {
         const map = {};
         snap.docs.forEach((d) => {
-          map[d.id] = { id: d.id, ...d.data() };
+          const row = { id: d.id, ...d.data() };
+          if (isRowVisibleToProfile(row)) {
+            map[d.id] = row;
+          }
         });
         state.selectedWeekTimesheetDocs = map;
         renderDerivedTimesheets();
@@ -1295,7 +1470,8 @@ function getDerivedTimesheetRows() {
   const rows = [];
 
   grouped.forEach((personPunches, nameKey) => {
-    const displayName = personPunches[0]?.name || nameKey;
+    const firstPunch = personPunches[0] || {};
+    const displayName = firstPunch.name || nameKey;
     const totals = buildWeekTotals(personPunches);
     const timesheetId = `${weekKey}_${nameKey}`;
     const saved = state.selectedWeekTimesheetDocs[timesheetId] || null;
@@ -1305,6 +1481,12 @@ function getDerivedTimesheetRows() {
       name: displayName,
       nameKey,
       weekKey,
+      companyId: saved?.companyId || firstPunch.companyId || state.companyId || '',
+      clientId: saved?.clientId || firstPunch.clientId || firstPunch.companyId || state.companyId || '',
+      siteId: saved?.siteId || firstPunch.siteId || firstPunch.assignedSiteId || '',
+      agencyId: saved?.agencyId || firstPunch.agencyId || state.agencyId || '',
+      employeeId: saved?.employeeId || firstPunch.employeeId || '',
+      workerId: saved?.workerId || firstPunch.workerId || firstPunch.employeeId || '',
       weeklyHours: totals.weeklyHours,
       daysWorked: totals.daysWorked,
       dailyTotals: totals.dailyTotals,
@@ -1332,8 +1514,15 @@ async function signTimesheet(timesheetId) {
   try {
     await setDoc(doc(db, 'timesheets', timesheetId), {
       name: row.name,
+      workerName: row.name,
       nameKey: row.nameKey,
       weekKey: row.weekKey,
+      companyId: row.companyId || state.companyId || '',
+      clientId: row.clientId || row.companyId || state.companyId || '',
+      siteId: row.siteId || '',
+      agencyId: row.agencyId || state.agencyId || '',
+      employeeId: row.employeeId || row.workerId || '',
+      workerId: row.workerId || row.employeeId || '',
       dailyTotals: row.dailyTotals,
       weeklyHours: row.weeklyHours,
       daysWorked: row.daysWorked,
@@ -1364,8 +1553,15 @@ async function reopenTimesheet(timesheetId) {
   try {
     await setDoc(doc(db, 'timesheets', timesheetId), {
       name: row.name,
+      workerName: row.name,
       nameKey: row.nameKey,
       weekKey: row.weekKey,
+      companyId: row.companyId || state.companyId || '',
+      clientId: row.clientId || row.companyId || state.companyId || '',
+      siteId: row.siteId || '',
+      agencyId: row.agencyId || state.agencyId || '',
+      employeeId: row.employeeId || row.workerId || '',
+      workerId: row.workerId || row.employeeId || '',
       dailyTotals: row.dailyTotals,
       weeklyHours: row.weeklyHours,
       daysWorked: row.daysWorked,
@@ -1470,7 +1666,7 @@ function buildWeekTotals(punches) {
 }
 
 function isEmployee() {
-  return state.profile?.role === 'employee';
+  return state.profile?.role === 'worker' || state.profile?.role === 'employee';
 }
 
 /* ───────────────────────────────────────────────────
@@ -1483,7 +1679,7 @@ function attachMyTimecardView() {
     : state.selectedWeekStart;
 
   const weekKey = formatDateKey(weekStart);
-  const employeeId = state.profile?.employeeId || null;
+  const employeeId = state.profile?.employeeId || state.profile?.workerId || null;
   const nameKey = normalizeName(state.profile?.name || '');
 
   if (!employeeId && !nameKey) {
@@ -1583,18 +1779,24 @@ async function handleMissedPunchSubmit(event) {
   }
 
   try {
-    await addDoc(collection(db, 'missedPunchRequests'), {
+    await addDoc(collection(db, 'punchRequests'), {
       uid: state.me.uid,
-      employeeId: state.profile.employeeId || '',
+      employeeId: state.profile.employeeId || state.profile.workerId || '',
+      workerId: state.profile.workerId || state.profile.employeeId || '',
       companyId: state.companyId || '',
+      clientId: state.companyId || '',
+      siteId: state.profile.assignedSiteId || '',
       agencyId: state.agencyId || '',
       name: state.profile.name || '',
+      workerName: state.profile.name || '',
       requestedAction: action,
       requestedDate: dateValue,
       requestedTime: timeValue,
       requestedTimestampMs,
+      requestedLocalDate: dateValue,
       reason,
       status: 'pending',
+      source: 'workerSelfService',
       reviewedBy: '',
       reviewedAt: null,
       approvedBy: '',
@@ -1618,7 +1820,7 @@ function attachMyMissedPunchView() {
   const constraints = [where('uid', '==', state.me.uid)];
   if (state.companyId) constraints.push(where('companyId', '==', state.companyId));
 
-  const q = query(collection(db, 'missedPunchRequests'), ...constraints);
+  const q = query(collection(db, 'punchRequests'), ...constraints);
 
   state.unsubscribers.push(
     onSnapshot(q, (snap) => {
@@ -1644,8 +1846,8 @@ function renderMyMissedPunches(rows) {
                         r.status === 'denied' ? 'color:var(--danger)' : 'color:var(--warn)';
     return `
       <tr>
-        <td>${escapeHtml(r.requestedDate || '-')}</td>
-        <td>${escapeHtml(r.requestedTime || '-')}</td>
+        <td>${escapeHtml(getRequestDateLabel(r))}</td>
+        <td>${escapeHtml(getRequestTimeLabel(r))}</td>
         <td>${prettyAction(r.requestedAction)}</td>
         <td>${escapeHtml(r.reason || '-')}</td>
         <td><span style="${statusClass};font-weight:700;text-transform:capitalize;">${escapeHtml(r.status || 'pending')}</span></td>
@@ -1664,11 +1866,11 @@ function attachApprovalView() {
   if (state.companyId) constraints.push(where('companyId', '==', state.companyId));
   if (isAgencyUser()) constraints.push(where('agencyId', '==', state.agencyId));
 
-  const q = query(collection(db, 'missedPunchRequests'), ...constraints);
+  const q = query(collection(db, 'punchRequests'), ...constraints);
 
   state.unsubscribers.push(
     onSnapshot(q, (snap) => {
-      state.allMissedRequests = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.allMissedRequests = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter(isRowVisibleToProfile);
       state.allMissedRequests.sort((a, b) => (b.requestedTimestampMs || 0) - (a.requestedTimestampMs || 0));
       renderApprovalList(state.allMissedRequests);
     }, (error) => {
@@ -1700,9 +1902,9 @@ function renderApprovalList(requests) {
 
     return `
       <tr>
-        <td>${escapeHtml(r.name || '-')}</td>
-        <td>${escapeHtml(r.requestedDate || '-')}</td>
-        <td>${escapeHtml(r.requestedTime || '-')}</td>
+        <td>${escapeHtml(r.workerName || r.name || '-')}</td>
+        <td>${escapeHtml(getRequestDateLabel(r))}</td>
+        <td>${escapeHtml(getRequestTimeLabel(r))}</td>
         <td>${prettyAction(r.requestedAction)}</td>
         <td>${escapeHtml(r.reason || '-')}</td>
         <td><span style="${statusClass};font-weight:700;text-transform:capitalize;">${escapeHtml(r.status)}</span></td>
@@ -1731,7 +1933,7 @@ async function approveRequest(requestId) {
 
   try {
     // 1. Update the request status
-    await updateDoc(doc(db, 'missedPunchRequests', requestId), {
+    await updateDoc(doc(db, 'punchRequests', requestId), {
       status: 'approved',
       reviewedBy: managerName,
       reviewedAt: now,
@@ -1746,8 +1948,9 @@ async function approveRequest(requestId) {
     const weekKey = formatDateKey(getMondayDate(punchDate));
 
     await addDoc(collection(db, 'punches'), {
-      name: req.name || '',
-      nameKey: normalizeName(req.name || ''),
+      name: req.workerName || req.name || '',
+      workerName: req.workerName || req.name || '',
+      nameKey: normalizeName(req.workerName || req.name || ''),
       action: req.requestedAction,
       timestamp: serverTimestamp(),
       timestampMs: req.requestedTimestampMs,
@@ -1759,7 +1962,10 @@ async function approveRequest(requestId) {
       approvedBy: managerName,
       approvedAt: now,
       companyId: req.companyId || '',
+      clientId: req.clientId || req.companyId || '',
+      siteId: req.siteId || '',
       agencyId: req.agencyId || '',
+      workerId: req.workerId || req.employeeId || '',
       employeeId: req.employeeId || '',
     });
 
@@ -1777,7 +1983,7 @@ async function denyRequest(requestId) {
   const managerName = state.profile?.name || state.me?.email || 'Manager';
 
   try {
-    await updateDoc(doc(db, 'missedPunchRequests', requestId), {
+    await updateDoc(doc(db, 'punchRequests', requestId), {
       status: 'denied',
       reviewedBy: managerName,
       reviewedAt: Timestamp.fromDate(new Date()),
@@ -1802,11 +2008,11 @@ function attachEmployeesView() {
   if (isAgencyUser()) empConstraints.push(where('agencyId', '==', state.agencyId));
   empConstraints.push(orderBy('name', 'asc'));
 
-  const empQuery = query(collection(db, 'employees'), ...empConstraints);
+  const empQuery = query(collection(db, 'workers'), ...empConstraints);
 
   state.unsubscribers.push(
     onSnapshot(empQuery, (snap) => {
-      state.allEmployees = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.allEmployees = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter(isRowVisibleToProfile);
       renderEmployeeList(state.allEmployees);
     }, (error) => {
       console.error(error);
@@ -1836,8 +2042,8 @@ function renderEmployeeList(employees) {
     <tr>
       <td>${escapeHtml(emp.employeeNumber || '-')}</td>
       <td>${escapeHtml(emp.name || '-')}</td>
-      <td>${escapeHtml(agencyLabel(emp.agencyId))}</td>
-      <td>${escapeHtml(emp.assignedSiteId || '-')}</td>
+      <td>${escapeHtml(emp.clientId || emp.companyId || '-')}</td>
+      <td>${escapeHtml(emp.siteId || emp.assignedSiteId || '-')}</td>
       <td><span class="tiny-flag">${escapeHtml(emp.status || 'active')}</span></td>
       <td>
         <button class="secondary-btn emp-edit-btn" data-id="${emp.id}" type="button">Edit</button>
@@ -1857,8 +2063,10 @@ function loadEmployeeForEdit(empId) {
   if (els.employeeDocId) els.employeeDocId.value = empId;
   if (els.empNameInput) els.empNameInput.value = emp.name || '';
   if (els.empNumberInput) els.empNumberInput.value = emp.employeeNumber || '';
-  if (els.empAgencySelect) els.empAgencySelect.value = emp.agencyId || '';
-  if (els.empSiteInput) els.empSiteInput.value = emp.assignedSiteId || '';
+  if (els.empAgencyInput) els.empAgencyInput.value = emp.agencyId || '';
+  if (els.empClientInput) els.empClientInput.value = emp.clientId || emp.companyId || '';
+  if (els.empSiteInput) els.empSiteInput.value = emp.siteId || emp.assignedSiteId || '';
+  if (els.empPinInput) els.empPinInput.value = '';
   if (els.empStatusSelect) els.empStatusSelect.value = emp.status || 'active';
   els.empCancelEditBtn?.classList.remove('hidden');
 }
@@ -1881,50 +2089,67 @@ async function handleSaveEmployee(event) {
   const nameKey = normalizeName(name);
 
   if (!name || nameKey.length < 2) {
-    toast('Enter a valid employee name.', true);
+    toast('Enter a valid worker name.', true);
     return;
   }
 
   let employeeNumber = els.empNumberInput?.value.trim();
-  const agencyId = els.empAgencySelect?.value || '';
+  const agencyId = els.empAgencyInput?.value.trim() || state.agencyId || '';
+  const clientId = els.empClientInput?.value.trim() || state.companyId || '';
   const assignedSiteId = els.empSiteInput?.value.trim() || '';
   const status = els.empStatusSelect?.value || 'active';
   const existingId = els.employeeDocId?.value || '';
+  const pin = String(els.empPinInput?.value || '').trim();
 
   // Auto-generate employee number if blank
   if (!employeeNumber) {
     employeeNumber = await generateNextEmployeeNumber();
   }
 
+  const [firstName, ...lastParts] = name.split(' ');
+  const lastName = lastParts.join(' ');
+
   const payload = {
     name,
+    displayName: name,
+    firstName: firstName || '',
+    lastName: lastName || '',
     nameKey,
     employeeNumber,
-    companyId: state.companyId || '',
+    companyId: clientId,
+    clientId,
     agencyId,
     assignedSiteId,
+    siteId: assignedSiteId,
     status,
+    workerId: existingId || '',
     updatedAt: serverTimestamp(),
   };
 
+  if (pin) {
+    payload.pinHash = await hashWorkerPin(pin, agencyId || clientId || 'default');
+  }
+
   try {
     if (existingId) {
-      // Update existing employee
-      await updateDoc(doc(db, 'employees', existingId), payload);
-      toast('Employee updated.');
+      // Update existing worker
+      await updateDoc(doc(db, 'workers', existingId), payload);
+      await logAudit('worker_updated', 'worker', existingId, {}, payload, pin ? 'PIN reset' : 'Profile update');
+      toast('Worker updated.');
     } else {
-      // Create new employee
+      // Create new worker
       payload.createdAt = serverTimestamp();
-      const newRef = await addDoc(collection(db, 'employees'), payload);
-      // Write employeeId field = doc ID
-      await updateDoc(newRef, { employeeId: newRef.id });
-      toast('Employee created: ' + employeeNumber);
+      const newRef = await addDoc(collection(db, 'workers'), payload);
+      // Keep both IDs for compatibility with the original QRTimeClock data shape.
+      await updateDoc(newRef, { employeeId: newRef.id, workerId: newRef.id });
+      await logAudit('worker_created', 'worker', newRef.id, {}, payload, 'Worker added');
+      toast('Worker created: ' + employeeNumber);
     }
 
     cancelEmployeeEdit();
   } catch (error) {
     console.error(error);
-    toast(error.message || 'Could not save employee.', true);
+    toast(error.message || 'Could not save worker.', true);
   }
 }
 
@@ -2181,11 +2406,36 @@ function clearTimesheetListenerOnly() {
 }
 
 function isManager() {
-  return ['manager', 'admin'].includes(state.profile?.role);
+  return ['manager', 'admin', 'agencyOwner', 'agencyAdmin', 'clientManager', 'platformOwner'].includes(state.profile?.role);
 }
 
 function isAdmin() {
-  return state.profile?.role === 'admin';
+  return ['admin', 'agencyOwner', 'agencyAdmin', 'platformOwner'].includes(state.profile?.role);
+}
+
+function isClientManager() {
+  return state.profile?.role === 'clientManager';
+}
+
+function getAssignedClientIds() {
+  return Array.isArray(state.profile?.assignedClientIds) ? state.profile.assignedClientIds : [];
+}
+
+function getAssignedSiteIds() {
+  return Array.isArray(state.profile?.assignedSiteIds) ? state.profile.assignedSiteIds : [];
+}
+
+function isRowVisibleToProfile(row) {
+  if (!row) return false;
+  if (isAdmin()) return true;
+  if (isClientManager()) {
+    const clientIds = getAssignedClientIds();
+    const siteIds = getAssignedSiteIds();
+    const clientMatch = !clientIds.length || (row.clientId && clientIds.includes(row.clientId)) || (row.companyId && clientIds.includes(row.companyId));
+    const siteMatch = !siteIds.length || (row.siteId && siteIds.includes(row.siteId)) || (row.assignedSiteId && siteIds.includes(row.assignedSiteId));
+    return clientMatch && siteMatch;
+  }
+  return isManager();
 }
 
 function prettyAction(action) {
@@ -2219,6 +2469,49 @@ function normalizeName(value) {
     .replace(/\s+/g, ' ')
     .replace(/[^a-z0-9 ]/g, '')
     .replaceAll(' ', '_');
+}
+
+function getRequestDateLabel(row) {
+  if (row?.requestedDate) return row.requestedDate;
+  if (row?.requestedLocalDate) return row.requestedLocalDate;
+  if (row?.requestedTimestampMs) return formatDateKey(new Date(row.requestedTimestampMs));
+  return '-';
+}
+
+function getRequestTimeLabel(row) {
+  if (row?.requestedTime) return row.requestedTime;
+  if (row?.requestedTimestampMs) return formatTime(row.requestedTimestampMs);
+  return '-';
+}
+
+async function hashWorkerPin(pin, scope) {
+  const input = `${String(scope || '').trim()}::${String(pin || '').trim()}`;
+  const data = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function logAudit(action, entityType, entityId, oldValue = {}, newValue = {}, reason = '') {
+  if (!firebaseReady() || !state.me) return;
+  try {
+    await addDoc(collection(db, 'auditLogs'), {
+      agencyId: state.agencyId || '',
+      companyId: state.companyId || '',
+      actorId: state.me.uid || '',
+      actorRole: state.profile?.role || '',
+      action,
+      entityType,
+      entityId,
+      oldValue,
+      newValue,
+      reason,
+      createdAt: serverTimestamp()
+    });
+  } catch (error) {
+    console.warn('Audit log write failed:', error.message);
+  }
 }
 
 function toLocalEditString(ms) {

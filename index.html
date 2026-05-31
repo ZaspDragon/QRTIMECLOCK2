@@ -31,7 +31,7 @@
     <section id="workerCard" class="card">
       <div class="card-head">
         <h2>Worker Punch</h2>
-        <p>Type your name — we'll find you or set you up automatically.</p>
+        <p>Enter your name and PIN, then clock in, start lunch, end lunch, or clock out.</p>
       </div>
 
       <div class="stack gap16">
@@ -43,6 +43,20 @@
             <ul id="workerAutocompleteList" class="autocomplete-list" hidden></ul>
           </div>
         </label>
+        <label>
+          <span>Worker PIN</span>
+          <input id="workerPinInput" type="password" inputmode="numeric" placeholder="Enter your PIN" autocomplete="off" />
+        </label>
+        <div class="inline-two">
+          <label>
+            <span>Company / Client</span>
+            <input id="workerClientInput" type="text" placeholder="Client or company name" autocomplete="off" />
+          </label>
+          <label>
+            <span>Job Site</span>
+            <input id="workerSiteInput" type="text" placeholder="Warehouse or worksite" autocomplete="off" />
+          </label>
+        </div>
         <div id="workerLookupStatus" class="status-box">Type your name to begin.</div>
 
         <div class="button-grid">
@@ -61,6 +75,11 @@
 
         <div id="workerStatusMessage" class="status-box">Enter your name and punch.</div>
 
+        <div class="form-actions">
+          <button id="workerViewTimeBtn" class="ghost-btn" type="button">My Time</button>
+          <button id="workerRequestFixBtn" class="ghost-btn" type="button">Request Time Fix</button>
+        </div>
+
         <div class="mini-table-wrap">
           <table>
             <thead>
@@ -74,13 +93,76 @@
             </tbody>
           </table>
         </div>
+
+        <section id="workerMyTimePanel" class="worker-self-service hidden">
+          <div class="card-head">
+            <h3>My Time</h3>
+            <p>View your current day, current week, and punch history after entering your name and PIN.</p>
+          </div>
+          <div class="form-actions">
+            <button id="workerLoadTimeBtn" class="secondary-btn" type="button">View My Time</button>
+          </div>
+          <div class="stats-grid" style="margin-top: 14px;">
+            <div class="stat-card"><span>Today</span><strong id="workerTodayHoursValue">0.00</strong></div>
+            <div class="stat-card"><span>This Week</span><strong id="workerWeekHoursValue">0.00</strong></div>
+            <div class="stat-card"><span>Lunch</span><strong id="workerLunchMinutesValue">0 min</strong></div>
+            <div class="stat-card"><span>Approval</span><strong id="workerApprovalStatusValue">Pending</strong></div>
+          </div>
+          <div class="mini-table-wrap tall" style="margin-top: 14px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date/Time</th>
+                  <th>Action</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="workerMyTimeBody">
+                <tr><td colspan="3">Enter your name and PIN, then tap View My Time.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="workerFixPanel" class="worker-self-service hidden">
+          <div class="card-head">
+            <h3>Request Time Fix</h3>
+            <p>If something is missing or wrong, submit a correction request for review.</p>
+          </div>
+          <form id="workerFixForm" class="grid-form">
+            <label>
+              <span>Punch type</span>
+              <select id="workerFixActionInput">
+                <option value="clock_in">Clock In</option>
+                <option value="start_lunch">Start Lunch</option>
+                <option value="end_lunch">End Lunch</option>
+                <option value="clock_out">Clock Out</option>
+              </select>
+            </label>
+            <label>
+              <span>Date</span>
+              <input id="workerFixDateInput" type="date" required />
+            </label>
+            <label>
+              <span>Requested time</span>
+              <input id="workerFixTimeInput" type="time" required />
+            </label>
+            <label class="full-width">
+              <span>Reason</span>
+              <input id="workerFixReasonInput" type="text" placeholder="Explain what needs to be corrected" required />
+            </label>
+            <div class="form-actions full-width">
+              <button class="primary-btn" type="submit">Submit Time Fix Request</button>
+            </div>
+          </form>
+        </section>
       </div>
     </section>
 
     <section id="authCard" class="card auth-card">
       <div class="card-head">
         <h2>Manager Sign In</h2>
-        <p>Managers and admins use email/password to view live punches and sign weekly timesheets.</p>
+        <p>Managers and admins use email/password to manage workers, review punches, and sign weekly timesheets.</p>
       </div>
 
       <form id="loginForm" class="grid-form">
@@ -403,30 +485,34 @@
           <article class="card">
             <div class="card-head">
               <h2>Add / Edit Employee</h2>
-              <p>Creates a record in the employees collection. No Firebase login needed for temps.</p>
+              <p>Create worker records, set PINs, and assign them to the right client and site. No worker email login needed.</p>
             </div>
 
             <form id="employeeForm" class="grid-form">
               <input id="employeeDocId" type="hidden" />
               <label>
-                <span>Full name</span>
+                <span>Worker name</span>
                 <input id="empNameInput" type="text" placeholder="John Doe" required />
               </label>
               <label>
-                <span>Employee number</span>
+                <span>Worker number</span>
                 <input id="empNumberInput" type="text" placeholder="Auto-generated if blank" />
               </label>
               <label>
                 <span>Agency</span>
-                <select id="empAgencySelect">
-                  <option value="">Direct hire (no agency)</option>
-                  <option value="sterling_staffing">Sterling Staffing</option>
-                  <option value="excel_staffing">Excel Staffing</option>
-                </select>
+                <input id="empAgencyInput" type="text" placeholder="Staffing agency ID or name" />
+              </label>
+              <label>
+                <span>Company / Client</span>
+                <input id="empClientInput" type="text" placeholder="Client or company" />
               </label>
               <label>
                 <span>Assigned site</span>
                 <input id="empSiteInput" type="text" placeholder="e.g. Warehouse A" />
+              </label>
+              <label>
+                <span>Worker PIN</span>
+                <input id="empPinInput" type="password" inputmode="numeric" placeholder="Set or reset PIN" />
               </label>
               <label>
                 <span>Status</span>
@@ -446,7 +532,7 @@
           <article class="card">
             <div class="card-head">
               <h2>Employee Roster</h2>
-              <p>All employees for this company. Click a row to edit.</p>
+              <p>All workers for this company. Click a row to edit.</p>
             </div>
 
             <div class="stack gap16" style="margin-bottom:12px;">
