@@ -57,7 +57,7 @@ function isAllowedAction(action) {
   return ["clock_in", "start_lunch", "end_lunch", "clock_out"].includes(action);
 }
 
-async function findWorkerFromPayload(payload) {
+function buildWorkerScope(payload) {
   const workerName = String(payload.workerName || "").trim();
   const pin = String(payload.pin || "").trim();
   const agencyId = String(payload.agencyId || "").trim();
@@ -68,6 +68,58 @@ async function findWorkerFromPayload(payload) {
     throw new Error("Worker name, PIN, staffing company, company/client, and site are required.");
   }
 
+  return {
+    workerName,
+    pin,
+    agencyId,
+    clientId,
+    siteId
+  };
+}
+
+function buildWorkerPinScope(worker) {
+  return worker.agencyId || worker.clientId || worker.companyId || "default";
+}
+
+async function createWorkerFromPayload(payload, scope) {
+  const workerRef = admin.firestore().collection("workers").doc();
+  const displayName = scope.workerName;
+  const nameKey = normalizeName(displayName);
+  const [firstName, ...lastParts] = displayName.split(" ");
+  const lastName = lastParts.join(" ");
+  const employeeNumber = `EMP-${workerRef.id.slice(0, 6).toUpperCase()}`;
+  const pinHash = hashWorkerPin(scope.pin, scope.agencyId || scope.clientId || "default");
+
+  const workerDoc = {
+    employeeId: workerRef.id,
+    workerId: workerRef.id,
+    employeeNumber,
+    name: displayName,
+    displayName,
+    firstName: firstName || "",
+    lastName,
+    nameKey,
+    companyId: scope.clientId,
+    clientId: scope.clientId,
+    siteId: scope.siteId,
+    assignedSiteId: scope.siteId,
+    agencyId: scope.agencyId,
+    agencyName: scope.agencyId,
+    status: "active",
+    pinHash,
+    source: "workerSelfRegistered",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+
+  await workerRef.set(workerDoc);
+  return { id: workerRef.id, ...workerDoc, _createdOnFirstPunch: true };
+}
+
+async function findWorkerFromPayload(payload, options = {}) {
+  const scope = buildWorkerScope(payload);
+  const workerName = String(payload.workerName || "").trim();
+
   const workerSnap = await admin
     .firestore()
     .collection("workers")
@@ -75,25 +127,29 @@ async function findWorkerFromPayload(payload) {
     .where("status", "==", "active")
     .get();
 
-  if (workerSnap.empty) {
+  const scopeMatches = workerSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((worker) => {
+      if ((worker.agencyId || "") !== scope.agencyId) return false;
+      if ((worker.clientId || worker.companyId || "") !== scope.clientId) return false;
+      if ((worker.siteId || worker.assignedSiteId || "") !== scope.siteId) return false;
+      return true;
+    });
+
+  if (!scopeMatches.length) {
+    if (options.allowCreate) {
+      return createWorkerFromPayload(payload, scope);
+    }
     throw new Error("No active worker was found for that name.");
   }
 
-  const matches = workerSnap.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((worker) => {
-      if ((worker.agencyId || "") !== agencyId) return false;
-      if (clientId && (worker.clientId || worker.companyId) !== clientId) return false;
-      if (siteId && (worker.siteId || worker.assignedSiteId) !== siteId) return false;
-      const scope = worker.agencyId || worker.clientId || worker.companyId || "default";
-      return worker.pinHash === hashWorkerPin(pin, scope);
-    });
+  const pinMatches = scopeMatches.filter((worker) => worker.pinHash === hashWorkerPin(scope.pin, buildWorkerPinScope(worker)));
 
-  if (!matches.length) {
+  if (!pinMatches.length) {
     throw new Error("PIN did not match an active worker for this company/site.");
   }
 
-  return matches[0];
+  return pinMatches[0];
 }
 
 async function loadWorkerPunches(workerId) {
@@ -272,7 +328,7 @@ exports.createWorkerPunch = onRequest(async (req, res) => {
       throw new Error("Invalid punch action.");
     }
 
-    const worker = await findWorkerFromPayload(payload);
+    const worker = await findWorkerFromPayload(payload, { allowCreate: true });
     const workerId = worker.workerId || worker.employeeId || worker.id;
     const punches = await loadWorkerPunches(workerId);
     const latestPunch = punches[punches.length - 1] || null;
@@ -310,6 +366,7 @@ exports.createWorkerPunch = onRequest(async (req, res) => {
 
     return res.json({
       ok: true,
+      workerCreated: Boolean(worker._createdOnFirstPunch),
       punch: { id: punchRef.id, ...punchDoc }
     });
   } catch (error) {

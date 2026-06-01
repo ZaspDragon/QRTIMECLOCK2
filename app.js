@@ -529,17 +529,21 @@ async function handleWorkerPunch(action) {
     });
     const punch = result?.punch || {};
     const savedAt = Number(punch.timestampMs || Date.now());
+    const createdWorker = Boolean(result?.workerCreated);
 
+    if (els.workerAgencyValue) els.workerAgencyValue.textContent = formatStaffingCompany(workerContext.agencyId);
     if (els.workerLastActionValue) els.workerLastActionValue.textContent = prettyAction(action);
     if (els.workerLastPunchValue) els.workerLastPunchValue.textContent = formatDateTime(savedAt);
     if (els.workerStatusValue) els.workerStatusValue.textContent = statusLabelForAction(action);
     if (els.workerStatusMessage) {
-      els.workerStatusMessage.textContent = `${prettyAction(action)} saved for ${workerContext.workerName} at ${formatDateTime(savedAt)}.`;
+      els.workerStatusMessage.textContent = createdWorker
+        ? `${prettyAction(action)} saved for ${workerContext.workerName} at ${formatDateTime(savedAt)}. Your name and PIN are now set up.`
+        : `${prettyAction(action)} saved for ${workerContext.workerName} at ${formatDateTime(savedAt)}.`;
     }
 
     localStorage.setItem('workerPunchName', workerContext.workerName);
     await loadWorkerTimeSnapshot();
-    toast(`${prettyAction(action)} saved.`);
+    toast(createdWorker ? `${prettyAction(action)} saved. Worker profile created.` : `${prettyAction(action)} saved.`);
   } catch (error) {
     console.error(error);
     toast(error.message || "Punch didn't go through. Submit a time fix request.", true);
