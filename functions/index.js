@@ -64,8 +64,8 @@ async function findWorkerFromPayload(payload) {
   const clientId = String(payload.clientId || "").trim();
   const siteId = String(payload.siteId || "").trim();
 
-  if (!workerName || !pin || !clientId || !siteId) {
-    throw new Error("Worker name, PIN, company/client, and site are required.");
+  if (!workerName || !pin || !agencyId || !clientId || !siteId) {
+    throw new Error("Worker name, PIN, staffing company, company/client, and site are required.");
   }
 
   const workerSnap = await admin
@@ -82,7 +82,7 @@ async function findWorkerFromPayload(payload) {
   const matches = workerSnap.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
     .filter((worker) => {
-      if (agencyId && worker.agencyId && worker.agencyId !== agencyId) return false;
+      if ((worker.agencyId || "") !== agencyId) return false;
       if (clientId && (worker.clientId || worker.companyId) !== clientId) return false;
       if (siteId && (worker.siteId || worker.assignedSiteId) !== siteId) return false;
       const scope = worker.agencyId || worker.clientId || worker.companyId || "default";
@@ -221,6 +221,7 @@ async function upsertTimesheetForWorker(worker, punches) {
     clientId: worker.clientId || worker.companyId || "",
     siteId: worker.siteId || worker.assignedSiteId || "",
     agencyId: worker.agencyId || "",
+    agencyName: worker.agencyName || worker.agencyId || "",
     dailyTotals,
     weeklyHours: summary.weekHours,
     daysWorked: Object.keys(dailyTotals).length,
@@ -248,6 +249,7 @@ exports.verifyWorkerPinAndGetTime = onRequest(async (req, res) => {
         id: worker.workerId || worker.employeeId || worker.id,
         displayName: worker.displayName || worker.name || "",
         agencyId: worker.agencyId || "",
+        agencyName: worker.agencyName || worker.agencyId || "",
         clientId: worker.clientId || worker.companyId || "",
         siteId: worker.siteId || worker.assignedSiteId || ""
       },
@@ -294,6 +296,7 @@ exports.createWorkerPunch = onRequest(async (req, res) => {
       clientId: worker.clientId || worker.companyId || payload.clientId || "",
       siteId: worker.siteId || worker.assignedSiteId || payload.siteId || "",
       agencyId: worker.agencyId || payload.agencyId || "",
+      agencyName: worker.agencyName || worker.agencyId || payload.agencyId || "",
       source: "workerSelfService",
       status: "pending",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -332,6 +335,7 @@ exports.createPunchRequest = onRequest(async (req, res) => {
 
     const requestDoc = {
       agencyId: worker.agencyId || payload.agencyId || "",
+      agencyName: worker.agencyName || worker.agencyId || payload.agencyId || "",
       clientId: worker.clientId || worker.companyId || payload.clientId || "",
       siteId: worker.siteId || worker.assignedSiteId || payload.siteId || "",
       workerId: worker.workerId || worker.employeeId || worker.id,

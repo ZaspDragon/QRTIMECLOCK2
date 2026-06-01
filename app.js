@@ -63,11 +63,13 @@ const state = {
 const els = {
   workerNameInput: document.getElementById('workerNameInput'),
   workerPinInput: document.getElementById('workerPinInput'),
+  workerAgencyInput: document.getElementById('workerAgencyInput'),
   workerClientInput: document.getElementById('workerClientInput'),
   workerSiteInput: document.getElementById('workerSiteInput'),
   workerAutocompleteList: document.getElementById('workerAutocompleteList'),
   workerLookupStatus: document.getElementById('workerLookupStatus'),
   workerNameValue: document.getElementById('workerNameValue'),
+  workerAgencyValue: document.getElementById('workerAgencyValue'),
   workerLastActionValue: document.getElementById('workerLastActionValue'),
   workerLastPunchValue: document.getElementById('workerLastPunchValue'),
   workerStatusValue: document.getElementById('workerStatusValue'),
@@ -775,7 +777,7 @@ function applyWorkerAvailabilityState() {
   }
 
   if (!workerFunctionsReady()) {
-    const setupMessage = 'Worker PIN punching is not connected yet. Add this repo\'s Firebase Functions URL to enable worker clock in, My Time, and time-fix requests.';
+    const setupMessage = 'Worker PIN punching is not connected yet. Add this repo\'s Firebase Functions URL to enable staffing-company punch in, My Time, and time-fix requests.';
     if (els.workerLookupStatus) {
       els.workerLookupStatus.textContent = setupMessage;
       els.workerLookupStatus.style.borderColor = 'rgba(255,202,87,0.45)';
@@ -788,7 +790,7 @@ function applyWorkerAvailabilityState() {
   }
 
   if (els.workerLookupStatus) {
-    els.workerLookupStatus.textContent = 'Enter your name, PIN, company, and job site to punch.';
+    els.workerLookupStatus.textContent = 'Enter your name, PIN, staffing company, client, and job site to punch.';
     els.workerLookupStatus.style.borderColor = '';
   }
   if (els.workerStatusMessage) {
@@ -806,8 +808,13 @@ function toggleWorkerPanel(panel) {
 
 function prefillPublicPunchContext() {
   const params = new URLSearchParams(window.location.search);
+  const agencyValue = params.get('agencyId') || params.get('agency') || '';
   const clientValue = params.get('clientId') || params.get('company') || '';
   const siteValue = params.get('siteId') || params.get('site') || '';
+  if (els.workerAgencyInput && agencyValue) {
+    els.workerAgencyInput.value = agencyValue;
+    els.workerAgencyInput.readOnly = true;
+  }
   if (els.workerClientInput && clientValue) {
     els.workerClientInput.value = clientValue;
     els.workerClientInput.readOnly = true;
@@ -821,10 +828,9 @@ function prefillPublicPunchContext() {
 function collectWorkerIdentity() {
   const workerName = prettifyHumanName(els.workerNameInput?.value.trim() || '');
   const pin = String(els.workerPinInput?.value || '').trim();
+  const agencyId = String(els.workerAgencyInput?.value || '').trim();
   const clientId = String(els.workerClientInput?.value || '').trim();
   const siteId = String(els.workerSiteInput?.value || '').trim();
-  const params = new URLSearchParams(window.location.search);
-  const agencyId = String(params.get('agencyId') || '').trim();
 
   if (!workerName) {
     toast('Enter your name first.', true);
@@ -832,6 +838,10 @@ function collectWorkerIdentity() {
   }
   if (!pin) {
     toast('Enter your worker PIN first.', true);
+    return null;
+  }
+  if (!agencyId) {
+    toast('Enter your staffing company first.', true);
     return null;
   }
   if (!clientId) {
@@ -871,9 +881,12 @@ async function loadWorkerTimeSnapshot() {
 }
 
 function renderWorkerTimeSnapshot(snapshot) {
+  const worker = snapshot?.worker || {};
   const summary = snapshot?.summary || {};
   const punches = Array.isArray(snapshot?.recentPunches) ? snapshot.recentPunches : [];
 
+  if (els.workerNameValue) els.workerNameValue.textContent = worker.displayName || els.workerNameInput?.value.trim() || '-';
+  if (els.workerAgencyValue) els.workerAgencyValue.textContent = formatStaffingCompany(worker.agencyId || els.workerAgencyInput?.value || '-');
   if (els.workerTodayHoursValue) els.workerTodayHoursValue.textContent = Number(summary.todayHours || 0).toFixed(2);
   if (els.workerWeekHoursValue) els.workerWeekHoursValue.textContent = Number(summary.weekHours || 0).toFixed(2);
   if (els.workerLunchMinutesValue) els.workerLunchMinutesValue.textContent = `${Number(summary.lunchMinutes || 0)} min`;
@@ -1047,6 +1060,10 @@ const AGENCY_NAMES = {
 function agencyLabel(agencyId) {
   if (!agencyId) return 'Direct';
   return AGENCY_NAMES[agencyId] || agencyId;
+}
+
+function formatStaffingCompany(value) {
+  return agencyLabel(String(value || '').trim());
 }
 
 function attachRoleViews() {
@@ -1433,7 +1450,7 @@ function renderDerivedTimesheets() {
 
     return `
       <tr>
-        <td>${escapeHtml(row.name || '-')}</td>
+        <td>${escapeHtml(row.name || '-')}${row.agencyId ? `<br><span class="tiny">${escapeHtml(formatStaffingCompany(row.agencyId))}</span>` : ''}</td>
         <td>${escapeHtml(row.weekKey || '-')}</td>
         <td>${hoursText}</td>
         <td>${escapeHtml(row.status || 'open')}</td>
@@ -1485,6 +1502,7 @@ function getDerivedTimesheetRows() {
       clientId: saved?.clientId || firstPunch.clientId || firstPunch.companyId || state.companyId || '',
       siteId: saved?.siteId || firstPunch.siteId || firstPunch.assignedSiteId || '',
       agencyId: saved?.agencyId || firstPunch.agencyId || state.agencyId || '',
+      agencyName: saved?.agencyName || firstPunch.agencyName || firstPunch.agencyId || state.agencyId || '',
       employeeId: saved?.employeeId || firstPunch.employeeId || '',
       workerId: saved?.workerId || firstPunch.workerId || firstPunch.employeeId || '',
       weeklyHours: totals.weeklyHours,
@@ -1521,6 +1539,7 @@ async function signTimesheet(timesheetId) {
       clientId: row.clientId || row.companyId || state.companyId || '',
       siteId: row.siteId || '',
       agencyId: row.agencyId || state.agencyId || '',
+      agencyName: row.agencyName || row.agencyId || state.agencyId || '',
       employeeId: row.employeeId || row.workerId || '',
       workerId: row.workerId || row.employeeId || '',
       dailyTotals: row.dailyTotals,
@@ -1560,6 +1579,7 @@ async function reopenTimesheet(timesheetId) {
       clientId: row.clientId || row.companyId || state.companyId || '',
       siteId: row.siteId || '',
       agencyId: row.agencyId || state.agencyId || '',
+      agencyName: row.agencyName || row.agencyId || state.agencyId || '',
       employeeId: row.employeeId || row.workerId || '',
       workerId: row.workerId || row.employeeId || '',
       dailyTotals: row.dailyTotals,
@@ -2119,6 +2139,7 @@ async function handleSaveEmployee(event) {
     companyId: clientId,
     clientId,
     agencyId,
+    agencyName: agencyId,
     assignedSiteId,
     siteId: assignedSiteId,
     status,
@@ -2277,6 +2298,9 @@ function renderAgencyPreview() {
           <h2 style="margin:0 0 8px;font-size:28px;">Weekly Time Sheet</h2>
           <div style="font-size:15px;line-height:1.6;">
             <div><strong>Worker:</strong> ${escapeHtml(row.name)}</div>
+            <div><strong>Staffing Company:</strong> ${escapeHtml(formatStaffingCompany(row.agencyName || row.agencyId || '-'))}</div>
+            <div><strong>Client:</strong> ${escapeHtml(row.clientId || row.companyId || getCompanyName())}</div>
+            <div><strong>Site:</strong> ${escapeHtml(row.siteId || '-')}</div>
             <div><strong>Week Start:</strong> ${escapeHtml(row.weekKey)}</div>
             <div><strong>Status:</strong> ${escapeHtml(row.status)}</div>
           </div>
