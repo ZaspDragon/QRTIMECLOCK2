@@ -63,6 +63,7 @@ const state = {
 const els = {
   workerNameInput: document.getElementById('workerNameInput'),
   workerPinInput: document.getElementById('workerPinInput'),
+  workerPinToggleBtn: document.getElementById('workerPinToggleBtn'),
   workerAgencyInput: document.getElementById('workerAgencyInput'),
   workerClientInput: document.getElementById('workerClientInput'),
   workerSiteInput: document.getElementById('workerSiteInput'),
@@ -160,6 +161,7 @@ const els = {
   empClientInput: document.getElementById('empClientInput'),
   empSiteInput: document.getElementById('empSiteInput'),
   empPinInput: document.getElementById('empPinInput'),
+  empPinToggleBtn: document.getElementById('empPinToggleBtn'),
   empStatusSelect: document.getElementById('empStatusSelect'),
   empCancelEditBtn: document.getElementById('empCancelEditBtn'),
   empFilterInput: document.getElementById('empFilterInput'),
@@ -275,6 +277,7 @@ function wireEvents() {
   els.workerNameInput?.addEventListener('input', debounce(handleWorkerNameAutocomplete, 250));
   els.workerNameInput?.addEventListener('focus', () => handleWorkerNameAutocomplete());
   els.workerNameInput?.addEventListener('keydown', handleAutocompleteKeydown);
+  els.workerPinToggleBtn?.addEventListener('click', () => togglePinVisibility(els.workerPinInput, els.workerPinToggleBtn));
   els.workerViewTimeBtn?.addEventListener('click', () => toggleWorkerPanel('time'));
   els.workerRequestFixBtn?.addEventListener('click', () => toggleWorkerPanel('fix'));
   els.workerLoadTimeBtn?.addEventListener('click', loadWorkerTimeSnapshot);
@@ -334,6 +337,7 @@ function wireEvents() {
   });
 
   els.employeeForm?.addEventListener('submit', handleSaveEmployee);
+  els.empPinToggleBtn?.addEventListener('click', () => togglePinVisibility(els.empPinInput, els.empPinToggleBtn));
   els.empCancelEditBtn?.addEventListener('click', cancelEmployeeEdit);
   els.empFilterInput?.addEventListener('input', () => renderEmployeeList(state.allEmployees || []));
 
@@ -506,6 +510,14 @@ function hideAutocomplete() {
     els.workerAutocompleteList.innerHTML = '';
   }
   _acActiveIndex = -1;
+}
+
+function togglePinVisibility(inputEl, buttonEl) {
+  if (!inputEl || !buttonEl) return;
+  const reveal = inputEl.type === 'password';
+  inputEl.type = reveal ? 'text' : 'password';
+  buttonEl.textContent = reveal ? 'Hide' : 'Show';
+  buttonEl.setAttribute('aria-label', reveal ? 'Hide PIN' : 'Show PIN');
 }
 
 function escapeHTML(str) {

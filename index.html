@@ -45,7 +45,10 @@
         </label>
         <label>
           <span>Worker PIN</span>
-          <input id="workerPinInput" type="password" inputmode="numeric" placeholder="Enter your PIN" autocomplete="off" />
+          <div class="input-with-action">
+            <input id="workerPinInput" type="password" inputmode="numeric" placeholder="Enter your PIN" autocomplete="off" />
+            <button id="workerPinToggleBtn" class="ghost-btn input-inline-btn" type="button" aria-label="Show worker PIN">Show</button>
+          </div>
         </label>
         <label>
           <span>Staffing Company</span>
@@ -517,7 +520,10 @@
               </label>
               <label>
                 <span>Worker PIN</span>
-                <input id="empPinInput" type="password" inputmode="numeric" placeholder="Set or reset PIN" />
+                <div class="input-with-action">
+                  <input id="empPinInput" type="password" inputmode="numeric" placeholder="Set or reset PIN" />
+                  <button id="empPinToggleBtn" class="ghost-btn input-inline-btn" type="button" aria-label="Show worker PIN">Show</button>
+                </div>
               </label>
               <label>
                 <span>Status</span>
