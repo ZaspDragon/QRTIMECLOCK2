@@ -274,11 +274,15 @@ function wireEvents() {
   });
 
   // Name input with autocomplete
+  els.workerNameInput?.addEventListener('input', handleWorkerIdentityChange);
   els.workerNameInput?.addEventListener('input', debounce(handleWorkerNameAutocomplete, 250));
   els.workerNameInput?.addEventListener('focus', () => handleWorkerNameAutocomplete());
   els.workerNameInput?.addEventListener('keydown', handleAutocompleteKeydown);
+  [els.workerPinInput, els.workerAgencyInput, els.workerClientInput, els.workerSiteInput].forEach((input) => {
+    input?.addEventListener('input', handleWorkerIdentityChange);
+  });
   els.workerPinToggleBtn?.addEventListener('click', () => togglePinVisibility(els.workerPinInput, els.workerPinToggleBtn));
-  els.workerViewTimeBtn?.addEventListener('click', () => toggleWorkerPanel('time'));
+  els.workerViewTimeBtn?.addEventListener('click', loadWorkerTimeSnapshot);
   els.workerRequestFixBtn?.addEventListener('click', () => toggleWorkerPanel('fix'));
   els.workerLoadTimeBtn?.addEventListener('click', loadWorkerTimeSnapshot);
   els.workerFixForm?.addEventListener('submit', handlePublicPunchRequestSubmit);
@@ -398,7 +402,6 @@ function handleWorkerNameAutocomplete() {
     }
     hideAutocomplete();
     localStorage.setItem('workerPunchName', exactMatch.name);
-    attachWorkerLiveView(exactMatch.name);
     return;
   }
 
@@ -487,7 +490,6 @@ function selectAutocompleteEmployee(emp) {
   }
   hideAutocomplete();
   localStorage.setItem('workerPunchName', emp.name);
-  attachWorkerLiveView(emp.name);
 }
 
 function selectNewWorker(typed) {
@@ -510,6 +512,40 @@ function hideAutocomplete() {
     els.workerAutocompleteList.innerHTML = '';
   }
   _acActiveIndex = -1;
+}
+
+function resetWorkerTimePanels() {
+  state.workerTimeSnapshot = null;
+  if (state.workerUnsub) {
+    try { state.workerUnsub(); } catch (_) {}
+    state.workerUnsub = null;
+  }
+  toggleWorkerPanel(null);
+  if (els.workerTodayHoursValue) els.workerTodayHoursValue.textContent = '0.00';
+  if (els.workerWeekHoursValue) els.workerWeekHoursValue.textContent = '0.00';
+  if (els.workerLunchMinutesValue) els.workerLunchMinutesValue.textContent = '0 min';
+  if (els.workerApprovalStatusValue) els.workerApprovalStatusValue.textContent = 'Pending';
+  if (els.workerMyTimeBody) {
+    els.workerMyTimeBody.innerHTML = '<tr><td colspan="3">Enter your name and PIN, then tap My Time.</td></tr>';
+  }
+  if (els.workerHistoryBody) {
+    els.workerHistoryBody.innerHTML = '<tr><td colspan="2">No verified punches loaded yet.</td></tr>';
+  }
+  if (els.workerLastActionValue) els.workerLastActionValue.textContent = '-';
+  if (els.workerLastPunchValue) els.workerLastPunchValue.textContent = '-';
+  if (els.workerStatusValue) els.workerStatusValue.textContent = 'Ready';
+  if (els.workerStatusMessage) {
+    els.workerStatusMessage.textContent = 'Enter your name, PIN, staffing company, client, and site to punch.';
+  }
+}
+
+function handleWorkerIdentityChange() {
+  resetWorkerTimePanels();
+  const typedName = prettifyHumanName(els.workerNameInput?.value.trim() || '');
+  if (els.workerNameValue) els.workerNameValue.textContent = typedName || '-';
+  if (els.workerAgencyValue) {
+    els.workerAgencyValue.textContent = formatStaffingCompany(els.workerAgencyInput?.value || '-');
+  }
 }
 
 function togglePinVisibility(inputEl, buttonEl) {
@@ -642,80 +678,6 @@ async function handleManualPunchSubmit(event) {
   }
 }
 
-function attachWorkerLiveView(name) {
-  if (!firebaseReady() || !state.me) return;
-  if (state.workerUnsub) {
-    try { state.workerUnsub(); } catch (_) {}
-    state.workerUnsub = null;
-  }
-
-  const nameKey = normalizeName(name);
-  if (!nameKey) return;
-
-  const todayKey = formatDateKey(new Date());
-
-  const q = query(
-    collection(db, 'punches'),
-    where('nameKey', '==', nameKey),
-    where('dateKey', '==', todayKey),
-    orderBy('timestampMs', 'desc'),
-    limit(20)
-  );
-
-  state.workerUnsub = onSnapshot(q, (snap) => {
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-    if (!rows.length) {
-      if (els.workerLastActionValue) els.workerLastActionValue.textContent = '-';
-      if (els.workerLastPunchValue) els.workerLastPunchValue.textContent = '-';
-      if (els.workerStatusValue) els.workerStatusValue.textContent = 'Ready';
-      if (els.workerStatusMessage) els.workerStatusMessage.textContent = 'Enter your name and punch.';
-      if (els.workerHistoryBody) {
-        els.workerHistoryBody.innerHTML = '<tr><td colspan="2">No punches yet.</td></tr>';
-      }
-      return;
-    }
-
-    const last = rows[0];
-    if (els.workerNameValue) els.workerNameValue.textContent = last.name || name;
-    if (els.workerLastActionValue) els.workerLastActionValue.textContent = prettyAction(last.action);
-    if (els.workerLastPunchValue) els.workerLastPunchValue.textContent = formatDateTime(last.timestampMs);
-    if (els.workerStatusValue) els.workerStatusValue.textContent = statusLabelForAction(last.action);
-
-    const clockedInAt = findLatestClockInTime(rows);
-    if (els.workerStatusMessage) {
-      els.workerStatusMessage.textContent = clockedInAt
-        ? `${statusLabelForAction(last.action)}. Clocked in at ${formatDateTime(clockedInAt)}.`
-        : `${statusLabelForAction(last.action)} at ${formatDateTime(last.timestampMs)}.`;
-    }
-
-    if (els.workerHistoryBody) {
-      els.workerHistoryBody.innerHTML = rows.map((row) => `
-        <tr>
-          <td>${formatDateTime(row.timestampMs)}</td>
-          <td>${prettyAction(row.action)}</td>
-        </tr>
-      `).join('');
-    }
-  }, (error) => {
-    // Permission errors are expected for unauthenticated workers (original rules restrict reads to managers)
-    if (error.code === 'permission-denied' || (error.message && error.message.includes('permissions'))) {
-      console.info('Live punch view not available (read requires authentication). Punch data was saved.');
-    } else {
-      console.error('Live view error:', error);
-      toast(error.message || 'Could not load worker punches.', true);
-    }
-  });
-}
-
-function findLatestClockInTime(rows) {
-  const sorted = [...rows].sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0));
-  for (const row of sorted) {
-    if (row.action === 'clock_in') return row.timestampMs || 0;
-  }
-  return 0;
-}
-
 async function handleLogin(event) {
   event.preventDefault();
   if (!requireFirebaseReady('sign in')) return;
@@ -751,12 +713,18 @@ async function handlePasswordReset() {
 }
 
 function showLoggedOut() {
+  state.me = null;
+  state.profile = null;
   state.companyId = null;
   state.agencyId = null;
   state.companyDoc = null;
+  clearLiveListeners();
+  resetWorkerTimePanels();
   els.authCard?.classList.remove('hidden');
   els.appShell?.classList.add('hidden');
   els.sessionChip?.classList.add('hidden');
+  if (els.sessionName) els.sessionName.textContent = '-';
+  if (els.sessionRole) els.sessionRole.textContent = '-';
   // Restore public worker card
   const workerCard = document.getElementById('workerCard');
   if (workerCard) workerCard.classList.remove('hidden');
@@ -890,8 +858,13 @@ async function loadWorkerTimeSnapshot() {
     state.workerTimeSnapshot = snapshot || null;
     renderWorkerTimeSnapshot(snapshot || {});
     toggleWorkerPanel('time');
+    toast(`My Time loaded for ${workerContext.workerName}.`);
   } catch (error) {
     console.error(error);
+    state.workerTimeSnapshot = null;
+    if (els.workerStatusMessage) {
+      els.workerStatusMessage.textContent = error.message || 'Could not load your time.';
+    }
     toast(error.message || 'Could not load your time.', true);
   }
 }
@@ -969,9 +942,15 @@ async function handlePublicPunchRequestSubmit(event) {
     els.workerFixForm?.reset();
     if (els.workerFixDateInput) els.workerFixDateInput.value = formatDateInput(new Date());
     if (els.workerFixTimeInput) els.workerFixTimeInput.value = formatTimeForInput(Date.now());
-    toast('Time fix request submitted.');
+    if (els.workerStatusMessage) {
+      els.workerStatusMessage.textContent = `Time fix request submitted for ${workerContext.workerName}. A manager will review it.`;
+    }
+    toast('Time fix request submitted. A manager will review it.');
   } catch (error) {
     console.error(error);
+    if (els.workerStatusMessage) {
+      els.workerStatusMessage.textContent = error.message || 'Could not submit your request.';
+    }
     toast(error.message || 'Could not submit your request.', true);
   }
 }

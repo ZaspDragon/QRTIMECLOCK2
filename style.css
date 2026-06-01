@@ -443,6 +443,18 @@ tbody tr:hover { background: rgba(255,255,255,0.04); }
     grid-template-columns: 1fr;
   }
 
+  .input-with-action {
+    grid-template-columns: 1fr;
+  }
+
+  .input-inline-btn {
+    width: 100%;
+  }
+
+  .form-actions {
+    flex-wrap: wrap;
+  }
+
   .session-chip {
     padding: 8px 10px;
     font-size: 0.88rem;
