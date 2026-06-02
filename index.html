@@ -18,7 +18,7 @@
   <header class="topbar">
     <div>
       <h1>TimeClock Pro</h1>
-      <p>Mobile punch tracking with live manager visibility and weekly signoff.</p>
+      <p>Staffing timeclock, correction approvals, and payroll-ready weekly timesheets.</p>
     </div>
     <div id="sessionChip" class="session-chip hidden">
       <span id="sessionName">-</span>
@@ -64,7 +64,7 @@
             <input id="workerSiteInput" type="text" placeholder="Warehouse or worksite" autocomplete="off" />
           </label>
         </div>
-        <div id="workerLookupStatus" class="status-box">Type your name to begin.</div>
+        <div id="workerLookupStatus" class="status-box">Type your name and enter your PIN to begin.</div>
 
         <div class="button-grid">
           <button class="primary-btn worker-action-btn" data-action="clock_in" type="button">Clock In</button>
@@ -81,10 +81,10 @@
           <div class="stat-card"><span>Status</span><strong id="workerStatusValue">Ready</strong></div>
         </div>
 
-        <div id="workerStatusMessage" class="status-box">Enter your name and punch.</div>
+        <div id="workerStatusMessage" class="status-box">Enter your name and PIN, then choose a punch action.</div>
 
         <div class="form-actions">
-          <button id="workerViewTimeBtn" class="ghost-btn" type="button">My Time</button>
+          <button id="workerViewTimeBtn" class="ghost-btn" type="button">My Time This Week</button>
           <button id="workerRequestFixBtn" class="ghost-btn" type="button">Request Time Fix</button>
         </div>
 
@@ -159,6 +159,10 @@
               <span>Reason</span>
               <input id="workerFixReasonInput" type="text" placeholder="Explain what needs to be corrected" required />
             </label>
+            <label class="full-width">
+              <span>Optional note</span>
+              <input id="workerFixNoteInput" type="text" placeholder="Anything your staffing office should know" />
+            </label>
             <div class="form-actions full-width">
               <button class="primary-btn" type="submit">Submit Time Fix Request</button>
             </div>
@@ -170,7 +174,7 @@
     <section id="authCard" class="card auth-card">
       <div class="card-head">
         <h2>Manager Sign In</h2>
-        <p>Managers and admins use email/password to manage workers, review punches, and sign weekly timesheets.</p>
+        <p>Client managers, agency admins, and platform owners use email/password to manage workers, review punches, and approve weekly time.</p>
       </div>
 
       <form id="loginForm" class="grid-form">
@@ -191,23 +195,23 @@
 
     <section id="appShell" class="hidden">
       <nav class="tabs" id="tabBar">
-        <button class="tab hidden" data-tab="myTimecardTab" type="button" id="myTimecardTabBtn">My Timecard</button>
-        <button class="tab hidden" data-tab="missedPunchTab" type="button" id="missedPunchTabBtn">Request Punch</button>
-        <button class="tab active" data-tab="managerTab" type="button" id="managerTabBtn">Manager Live</button>
-        <button class="tab" data-tab="timesheetsTab" type="button" id="timesheetsTabBtn">Weekly Signoff</button>
+        <button class="tab hidden" data-tab="myTimecardTab" type="button" id="myTimecardTabBtn">Worker Dashboard</button>
+        <button class="tab hidden" data-tab="missedPunchTab" type="button" id="missedPunchTabBtn">Correction Requests</button>
+        <button class="tab active" data-tab="managerTab" type="button" id="managerTabBtn">Attendance Board</button>
+        <button class="tab" data-tab="timesheetsTab" type="button" id="timesheetsTabBtn">Weekly Timesheets</button>
         <button class="tab" data-tab="editPunchesTab" type="button" id="editPunchesTabBtn">Edit Punches</button>
-        <button class="tab" data-tab="approvalsTab" type="button" id="approvalsTabBtn">Approvals</button>
-        <button class="tab" data-tab="employeesTab" type="button" id="employeesTabBtn">Employees</button>
-        <button class="tab hidden" data-tab="adminTab" type="button" id="adminTabBtn">Users</button>
-        <button class="tab" data-tab="agencyTab" type="button" id="agencyTabBtn">Agency Export</button>
+        <button class="tab" data-tab="approvalsTab" type="button" id="approvalsTabBtn">Correction Review</button>
+        <button class="tab" data-tab="employeesTab" type="button" id="employeesTabBtn">Workers</button>
+        <button class="tab hidden" data-tab="adminTab" type="button" id="adminTabBtn">Settings & Access</button>
+        <button class="tab" data-tab="agencyTab" type="button" id="agencyTabBtn">Payroll</button>
       </nav>
 
       <section id="myTimecardTab" class="tab-panel hidden">
         <div class="card mobile-priority">
           <div class="card-head split-head">
             <div>
-              <h2>My Timecard</h2>
-              <p>Your punch history and weekly hours. Read-only.</p>
+              <h2>Worker Dashboard</h2>
+              <p>Your weekly time, lunch totals, missing punch warnings, and pending corrections. Read-only.</p>
             </div>
             <div class="inline-field slim-field">
               <label for="myTimecardWeekPicker">Week start</label>
@@ -232,10 +236,11 @@
                   <th>Lunch In</th>
                   <th>Clock Out</th>
                   <th>Hours</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody id="myTimecardBody">
-                <tr><td colspan="6">No punches this week.</td></tr>
+                <tr><td colspan="7">No punches this week.</td></tr>
               </tbody>
             </table>
           </div>
@@ -246,8 +251,8 @@
         <div class="panel-grid two-up">
           <article class="card">
             <div class="card-head">
-              <h2>Request a Missed Punch</h2>
-              <p>Forgot to clock in or out? Submit a request for your manager to approve.</p>
+              <h2>Request a Time Fix</h2>
+              <p>Missing punch or wrong time? Submit a correction request for review.</p>
             </div>
 
             <form id="missedPunchForm" class="grid-form">
@@ -272,6 +277,10 @@
                 <span>Reason</span>
                 <input id="mpReasonInput" type="text" placeholder="e.g. Forgot to clock in" required />
               </label>
+              <label class="full-width">
+                <span>Optional note</span>
+                <input id="mpNoteInput" type="text" placeholder="Anything else your client manager should know" />
+              </label>
               <div class="form-actions full-width">
                 <button class="primary-btn" type="submit">Submit Request</button>
               </div>
@@ -292,12 +301,13 @@
                     <th>Time</th>
                     <th>Action</th>
                     <th>Reason</th>
+                    <th>Note</th>
                     <th>Status</th>
                     <th>Reviewed By</th>
                   </tr>
                 </thead>
                 <tbody id="myMissedPunchBody">
-                  <tr><td colspan="6">No requests yet.</td></tr>
+                  <tr><td colspan="7">No requests yet.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -309,21 +319,22 @@
         <div class="panel-grid two-up">
           <article class="card">
             <div class="card-head">
-              <h2>Live punch feed</h2>
-              <p>This updates automatically as workers punch from their phones.</p>
+              <h2>Today’s attendance board</h2>
+              <p>Live worker punches across the sites you manage.</p>
             </div>
             <div class="mini-table-wrap tall">
               <table>
                 <thead>
                   <tr>
                     <th>Time</th>
-                    <th>Name</th>
+                    <th>Worker</th>
                     <th>Action</th>
+                    <th>Site</th>
                     <th>Source</th>
                   </tr>
                 </thead>
                 <tbody id="livePunchBody">
-                  <tr><td colspan="4">No live data yet.</td></tr>
+                  <tr><td colspan="5">No live data yet.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -331,8 +342,8 @@
 
           <article class="card">
             <div class="card-head">
-              <h2>Who is clocked in right now</h2>
-              <p>Derived from the latest punch for each person.</p>
+              <h2>Currently clocked in</h2>
+              <p>Derived from the latest punch for each worker.</p>
             </div>
             <div id="activeNowList" class="list-stack empty-state">Nobody is currently clocked in.</div>
           </article>
@@ -344,7 +355,7 @@
           <div class="card-head split-head">
             <div>
               <h2>Weekly timesheets</h2>
-              <p>Managers can sign each person’s weekly record. Signed sheets are locked.</p>
+              <p>Client managers approve time. Agency admins can lock approved payroll weeks.</p>
             </div>
             <div class="inline-field slim-field">
               <label for="weekPicker">Week start</label>
@@ -356,16 +367,18 @@
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>Worker</th>
                   <th>Week</th>
                   <th>Hours</th>
+                  <th>Lunch</th>
+                  <th>Warnings</th>
                   <th>Status</th>
-                  <th>Signed by</th>
+                  <th>Approved / Locked By</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody id="timesheetBody">
-                <tr><td colspan="6">No timesheets yet.</td></tr>
+                <tr><td colspan="8">No timesheets yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -377,7 +390,7 @@
           <article class="card">
             <div class="card-head">
               <h2>Manual correction</h2>
-              <p>Add a manual punch for someone when a correction is needed.</p>
+              <p>Add a manual punch for someone when a reviewed correction needs to be applied.</p>
             </div>
 
             <form id="manualPunchForm" class="grid-form">
@@ -401,6 +414,10 @@
               <label>
                 <span>Time</span>
                 <input id="manualPunchTimeInput" type="time" required />
+              </label>
+              <label class="full-width">
+                <span>Reason</span>
+                <input id="manualPunchReasonInput" type="text" placeholder="Required for audit history" required />
               </label>
               <div class="form-actions full-width">
                 <button class="primary-btn" type="submit">Add manual punch</button>
@@ -426,7 +443,7 @@
         <div class="card">
           <div class="card-head">
             <h2>Punch editor</h2>
-            <p>Edit time, action, or delete incorrect punches. Admin can also see who edited each record.</p>
+            <p>Edit time, action, or delete incorrect punches. Every change requires a reason and is logged.</p>
           </div>
 
           <div class="mini-table-wrap tall">
@@ -440,11 +457,12 @@
                   <th>Source</th>
                   <th>Edited By</th>
                   <th>Edited At</th>
+                  <th>Reason</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="editPunchesBody">
-                <tr><td colspan="8">No punches yet.</td></tr>
+                <tr><td colspan="9">No punches yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -454,8 +472,8 @@
       <section id="approvalsTab" class="tab-panel hidden">
         <div class="card">
           <div class="card-head">
-            <h2>Missed Punch Approvals</h2>
-            <p>Review and approve or deny employee missed-punch requests. Approved requests auto-create a punch.</p>
+            <h2>Correction Request Review</h2>
+            <p>Review worker time-fix requests. Approved requests create an auditable correction punch.</p>
           </div>
 
           <div class="stack gap16" style="margin-bottom:12px;">
@@ -471,17 +489,18 @@
             <table>
               <thead>
                 <tr>
-                  <th>Employee</th>
+                  <th>Worker</th>
                   <th>Requested Date</th>
                   <th>Time</th>
                   <th>Action</th>
                   <th>Reason</th>
+                  <th>Note</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="approvalListBody">
-                <tr><td colspan="7">No requests found.</td></tr>
+                <tr><td colspan="8">No requests found.</td></tr>
               </tbody>
             </table>
           </div>
@@ -492,7 +511,7 @@
         <div class="panel-grid two-up">
           <article class="card">
             <div class="card-head">
-              <h2>Add / Edit Employee</h2>
+              <h2>Add / Edit Worker</h2>
               <p>Create worker records, set PINs, and assign them to the right client and site. No worker email login needed.</p>
             </div>
 
@@ -534,7 +553,7 @@
                 </select>
               </label>
               <div class="form-actions full-width">
-                <button class="primary-btn" type="submit">Save Employee</button>
+                <button class="primary-btn" type="submit">Save Worker</button>
                 <button id="empCancelEditBtn" class="ghost-btn hidden" type="button">Cancel Edit</button>
               </div>
             </form>
@@ -542,8 +561,8 @@
 
           <article class="card">
             <div class="card-head">
-              <h2>Employee Roster</h2>
-              <p>All workers for this company. Click a row to edit.</p>
+              <h2>Worker Roster</h2>
+              <p>All workers for this staffing scope. Click a row to edit.</p>
             </div>
 
             <div class="stack gap16" style="margin-bottom:12px;">
@@ -566,7 +585,7 @@
                   </tr>
                 </thead>
                 <tbody id="employeeListBody">
-                  <tr><td colspan="6">No employees yet.</td></tr>
+                  <tr><td colspan="6">No workers yet.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -578,8 +597,8 @@
         <div class="panel-grid two-up">
           <article class="card">
             <div class="card-head">
-              <h2>Create or update manager/admin profile</h2>
-              <p>This writes to Firestore. The person still needs a Firebase Auth account.</p>
+              <h2>Access & Role Setup</h2>
+              <p>Create or update dashboard access. Workers do not need Firebase Auth accounts.</p>
             </div>
 
             <form id="userProfileForm" class="grid-form">
@@ -598,9 +617,22 @@
               <label>
                 <span>Role</span>
                 <select id="userRoleInput">
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
+                  <option value="clientManager">Client Manager</option>
+                  <option value="agencyAdmin">Agency Admin</option>
+                  <option value="platformOwner">Platform Owner</option>
                 </select>
+              </label>
+              <label>
+                <span>Agency ID</span>
+                <input id="userAgencyInput" type="text" placeholder="agency_123" />
+              </label>
+              <label class="full-width">
+                <span>Assigned client IDs</span>
+                <input id="userAssignedClientsInput" type="text" placeholder="client_a, client_b" />
+              </label>
+              <label class="full-width">
+                <span>Assigned site IDs</span>
+                <input id="userAssignedSitesInput" type="text" placeholder="site_1, site_2" />
               </label>
               <label>
                 <span>Active</span>
@@ -618,7 +650,7 @@
           <article class="card">
             <div class="card-head">
               <h2>Manager/Admin list</h2>
-              <p>Quick reference for people with dashboard access.</p>
+              <p>Dashboard users scoped by role and staffing access.</p>
             </div>
             <div class="mini-table-wrap tall">
               <table>
@@ -627,11 +659,12 @@
                     <th>Name</th>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Agency</th>
                     <th>Active</th>
                   </tr>
                 </thead>
                 <tbody id="userListBody">
-                  <tr><td colspan="4">No users yet.</td></tr>
+                  <tr><td colspan="5">No users yet.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -642,11 +675,28 @@
       <section id="agencyTab" class="tab-panel hidden">
         <div class="card">
           <div class="card-head">
-            <h2>Temp Agency Export</h2>
-            <p>Preview exactly what the agency will receive, then print or save it as a PDF.</p>
+            <h2>Payroll Export</h2>
+            <p>Filter weekly payroll, export CSV, and print a worker-ready backup sheet.</p>
           </div>
 
           <div class="grid-form compact-form" style="margin-bottom:16px;">
+            <label>
+              <span>Client filter</span>
+              <input id="payrollClientFilterInput" type="text" placeholder="All clients or type a client ID" />
+            </label>
+            <label>
+              <span>Site filter</span>
+              <input id="payrollSiteFilterInput" type="text" placeholder="All sites or type a site ID" />
+            </label>
+            <label>
+              <span>Status filter</span>
+              <select id="payrollStatusFilterInput">
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="locked">Locked</option>
+              </select>
+            </label>
             <label>
               <span>Worker</span>
               <select id="agencyWorkerSelect">
@@ -655,10 +705,14 @@
             </label>
 
             <div class="form-actions full-width">
+              <button id="payrollExportBtn" class="primary-btn" type="button">Export Payroll CSV</button>
+              <button id="payrollLockWeekBtn" class="ghost-btn" type="button">Lock Approved Week</button>
               <button id="agencyPreviewBtn" class="primary-btn" type="button">Preview Sheet</button>
               <button id="agencyPrintBtn" class="secondary-btn" type="button">Print / Save PDF</button>
             </div>
           </div>
+
+          <div id="payrollSummary" class="status-box">Weekly payroll totals will appear here after timesheets load.</div>
 
           <div id="agencyPreviewWrap" class="mini-table-wrap">
             <div id="agencyPreview" style="padding:18px;">

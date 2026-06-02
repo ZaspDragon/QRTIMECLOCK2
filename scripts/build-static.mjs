@@ -11,6 +11,10 @@ const filesToCopy = [
   "firebase-config.js"
 ];
 
+const directoriesToCopy = [
+  "src"
+];
+
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
 
@@ -21,6 +25,15 @@ for (const file of filesToCopy) {
     throw new Error(`Missing required build asset: ${file}`);
   }
   fs.copyFileSync(source, target);
+}
+
+for (const directory of directoriesToCopy) {
+  const sourceDir = path.join(root, directory);
+  const targetDir = path.join(dist, directory);
+  if (!fs.existsSync(sourceDir)) {
+    throw new Error(`Missing required build asset directory: ${directory}`);
+  }
+  fs.cpSync(sourceDir, targetDir, { recursive: true });
 }
 
 console.log(`Built static frontend into ${dist}`);
