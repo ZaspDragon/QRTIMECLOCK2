@@ -32,6 +32,7 @@ const state = {
   companyId: null,        // from user profile
   agencyId: null,         // from user profile (null = direct company user)
   companyDoc: null,       // loaded from clients/{companyId}
+  agencyDoc: null,        // loaded from agencies/{agencyId}
   unsubscribers: [],
   selectedWeekStart: getMondayDate(new Date()),
   workerUnsub: null,
@@ -238,19 +239,10 @@ async function init() {
         return;
       }
 
-      state.profile = profileSnap.data();
+      state.profile = normalizePortalyUserProfile(profileSnap.data(), user);
       state.companyId = state.profile.companyId || state.profile.clientId || state.profile.assignedClientIds?.[0] || null;
       state.agencyId = state.profile.agencyId || null;
-
-      // Load primary client doc if client scope exists
-      if (state.companyId) {
-        try {
-          const compSnap = await getDoc(doc(db, 'clients', state.companyId));
-          state.companyDoc = compSnap.exists() ? compSnap.data() : null;
-        } catch (_) {
-          state.companyDoc = null;
-        }
-      }
+      await loadSessionScopeDocs();
 
       showLoggedIn();
       attachRoleViews();
@@ -751,6 +743,7 @@ function showLoggedOut() {
   state.companyId = null;
   state.agencyId = null;
   state.companyDoc = null;
+  state.agencyDoc = null;
   clearLiveListeners();
   resetWorkerTimePanels();
   els.sessionChip?.classList.add('hidden');
@@ -1217,7 +1210,7 @@ function renderFirebaseUnavailable() {
 
 function showLoggedIn() {
   els.sessionChip?.classList.remove('hidden');
-  if (els.sessionName) els.sessionName.textContent = state.profile?.name || state.me?.email || 'Signed in';
+  if (els.sessionName) els.sessionName.textContent = getSessionDisplayName();
   if (els.sessionRole) {
     const roleParts = [formatRoleLabel(state.profile?.role || 'manager')];
     if (state.agencyId) roleParts.push('staffing');
@@ -1225,14 +1218,14 @@ function showLoggedIn() {
   }
 
   // Show company name in header
-  const companyDisplayName = state.companyDoc?.name || (state.companyId ? state.companyId : appSettings.companyName);
+  const companyDisplayName = getCompanyName();
   const headerP = document.querySelector('.topbar p');
   if (headerP) headerP.textContent = companyDisplayName + ' — TimeClock Pro';
   applyCurrentRoute();
 }
 
 function getCompanyName() {
-  return state.companyDoc?.name || state.companyId || appSettings.companyName;
+  return state.companyDoc?.name || state.agencyDoc?.name || state.companyId || state.agencyId || appSettings.companyName;
 }
 
 /** Returns true if current user is scoped to an agency */
@@ -2620,7 +2613,6 @@ function attachUsersView() {
   } else if (state.companyId) {
     userConstraints.push(where('companyId', '==', state.companyId));
   }
-  userConstraints.push(orderBy('name', 'asc'));
 
   const usersQuery = query(collection(db, 'users'), ...userConstraints);
 
@@ -2628,7 +2620,13 @@ function attachUsersView() {
     onSnapshot(
       usersQuery,
       (snap) => {
-        const rows = snap.docs.map((d) => d.data());
+        const rows = snap.docs
+          .map((d) => normalizePortalyUserProfile(d.data()))
+          .sort((left, right) => {
+            const leftName = String(left.name || left.email || '').toLowerCase();
+            const rightName = String(right.name || right.email || '').toLowerCase();
+            return leftName.localeCompare(rightName) || String(left.email || '').localeCompare(String(right.email || ''));
+          });
 
         if (!rows.length) {
           els.userListBody.innerHTML = '<tr><td colspan="5">No users yet.</td></tr>';
@@ -3004,6 +3002,10 @@ function isManager() {
   return ['manager', 'admin', 'agencyOwner', 'agencyAdmin', 'clientManager', 'platformOwner'].includes(state.profile?.role);
 }
 
+function isPlatformOwner() {
+  return state.profile?.role === 'platformOwner';
+}
+
 function isAdmin() {
   return ['admin', 'agencyOwner', 'agencyAdmin', 'platformOwner'].includes(state.profile?.role);
 }
@@ -3098,6 +3100,75 @@ function prettifyHumanName(value) {
     .replace(/\s+/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function normalizePortalyUserProfile(profile = {}, authUser = null) {
+  const assignedClientIds = Array.isArray(profile.assignedClientIds) ? profile.assignedClientIds.filter(Boolean) : [];
+  const assignedSiteIds = Array.isArray(profile.assignedSiteIds) ? profile.assignedSiteIds.filter(Boolean) : [];
+  const status = String(profile.status || '').trim().toLowerCase();
+  const rawName = profile.name
+    || profile.displayName
+    || [profile.firstName, profile.lastName].filter(Boolean).join(' ')
+    || authUser?.displayName
+    || profile.email
+    || authUser?.email
+    || '';
+  const name = prettifyHumanName(rawName) || authUser?.email || 'Dashboard User';
+  const companyId = profile.companyId || profile.clientId || assignedClientIds[0] || '';
+  const active = typeof profile.active === 'boolean' ? profile.active : status !== 'inactive';
+
+  return {
+    ...profile,
+    name,
+    email: String(profile.email || authUser?.email || '').trim().toLowerCase(),
+    role: profile.role || 'manager',
+    status: profile.status || (active ? 'active' : 'inactive'),
+    active,
+    companyId,
+    clientId: profile.clientId || companyId,
+    agencyId: profile.agencyId || '',
+    assignedClientIds,
+    assignedSiteIds,
+    workerId: profile.workerId || profile.employeeId || '',
+    employeeId: profile.employeeId || profile.workerId || ''
+  };
+}
+
+function getSessionDisplayName() {
+  return state.profile?.name || state.me?.displayName || state.me?.email || 'Signed in';
+}
+
+async function loadSessionScopeDocs() {
+  state.companyDoc = null;
+  state.agencyDoc = null;
+
+  const loaders = [];
+
+  if (state.companyId) {
+    loaders.push(
+      getDoc(doc(db, 'clients', state.companyId))
+        .then((snap) => {
+          state.companyDoc = snap.exists() ? snap.data() : null;
+        })
+        .catch(() => {
+          state.companyDoc = null;
+        })
+    );
+  }
+
+  if (state.agencyId) {
+    loaders.push(
+      getDoc(doc(db, 'agencies', state.agencyId))
+        .then((snap) => {
+          state.agencyDoc = snap.exists() ? snap.data() : null;
+        })
+        .catch(() => {
+          state.agencyDoc = null;
+        })
+    );
+  }
+
+  await Promise.all(loaders);
 }
 
 function normalizeName(value) {
